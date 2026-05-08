@@ -595,20 +595,43 @@ async function stopStudy(){
   }
   
   const pts=Math.floor(studySec/60), subj=G('subj-sel').value;
+  
+  // إضافة النقاط للمستخدم والفريق
   await updateDoc(doc(db,'users',uid),    { totalPts:increment(pts), totalSec:increment(studySec) });
   await updateDoc(doc(db,'squads',squadId),{ totalPts:increment(pts), totalSec:increment(studySec) });
   
-  // تحديث نقاط التحديات
+  // تحديث نقاط التحديات النشطة
   const sq = (await getDoc(doc(db,'squads',squadId))).data();
   if (sq.activeChallenges && sq.activeChallenges.length > 0) {
     for (const chal of sq.activeChallenges) {
       if (chal.status === 'active') {
         const chalDoc = await getDoc(doc(db,'challenges',chal.id));
+        if (!chalDoc.exists()) continue;
         const chalData = chalDoc.data();
+        
+        // تحديد أي فريق يضيف النقاط
         if (chalData.team1Id === squadId) {
+          // فريقك هو team1
           await updateDoc(doc(db,'challenges',chal.id), { team1Pts: increment(pts) });
+          // حدّث في الفريق الثاني أيضاً
+          const oppSq = (await getDoc(doc(db,'squads',chalData.team2Id))).data();
+          if (oppSq.activeChallenges) {
+            const updatedChal = oppSq.activeChallenges.map(c => 
+              c.id === chal.id ? {...c, team1Pts: (c.team1Pts||0) + pts} : c
+            );
+            await updateDoc(doc(db,'squads',chalData.team2Id), { activeChallenges: updatedChal });
+          }
         } else {
+          // فريقك هو team2
           await updateDoc(doc(db,'challenges',chal.id), { team2Pts: increment(pts) });
+          // حدّث في الفريق الأول أيضاً
+          const oppSq = (await getDoc(doc(db,'squads',chalData.team1Id))).data();
+          if (oppSq.activeChallenges) {
+            const updatedChal = oppSq.activeChallenges.map(c => 
+              c.id === chal.id ? {...c, team2Pts: (c.team2Pts||0) + pts} : c
+            );
+            await updateDoc(doc(db,'squads',chalData.team1Id), { activeChallenges: updatedChal });
+          }
         }
       }
     }
