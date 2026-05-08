@@ -562,26 +562,105 @@ function restoreStudyTimer() {
     }
   }
 }
+let sessionMode = false;
+let sessionTarget = 0;
+let sessionRemaining = 0;
+let sessionBreakTime = 0;
+let isOnBreak = false;
+
+window.openSessionModal = () => {
+  G('session-modal').style.display = 'flex';
+};
+window.closeSessionModal = () => {
+  G('session-modal').style.display = 'none';
+};
+
+window.startSession = async () => {
+  const hours = parseInt(G('session-hours').value) || 1;
+  const breakMins = parseInt(G('session-break').value) || 5;
+  
+  if (hours < 0.5 || hours > 24) return toast('اختر ساعات بين 0.5 و 24','err');
+  if (breakMins < 1 || breakMins > 120) return toast('اختر استراحة بين 1 و 120 دقيقة','err');
+  
+  sessionTarget = hours * 3600;
+  sessionRemaining = sessionTarget;
+  sessionBreakTime = breakMins * 60;
+  sessionMode = true;
+  isOnBreak = false;
+  studySec = 0;
+  
+  closeSessionModal();
+  switchTab('study');
+  
+  G('session-info').style.display = 'block';
+  updateSessionInfo();
+  
+  toast(`جلسة ${hours} ساعة مع استراحات ${breakMins} دقيقة! 🎯`,'ok');
+};
+
+function updateSessionInfo() {
+  if (!sessionMode) return;
+  const remaining = Math.max(0, sessionRemaining - studySec);
+  const percent = Math.max(0, Math.min(100, ((sessionTarget - remaining) / sessionTarget) * 100));
+  setText('session-target', `الهدف: ${Math.floor(sessionTarget/3600)}س`);
+  setText('session-remaining', `المتبقي: ${Math.floor(remaining/3600)}س ${Math.floor((remaining%3600)/60)}د`);
+  setText('session-progress-num', `${Math.round(percent)}%`);
+  G('session-progress-bar').style.width = `${percent}%`;
+  
+  if (remaining <= 0 && !isOnBreak) {
+    completeSession();
+  }
+}
+
+function completeSession() {
+  sessionMode = false;
+  G('session-info').style.display = 'none';
+  stopStudy();
+  toast('أحسنت! اكملت الجلسة! 🎉','ok');
+}
+
 window.toggleStudy = ()=>{ studyActive?stopStudy():startStudy(); };
 function startStudy(){
   studyActive=true;
   if (studySec === 0) studySec = 0;
   lastStudyTime = Date.now() - studySec * 1000;
   G('study-btn').classList.add('running');
-  setText('study-lbl','⏹ إيقاف الجلسة');
+  setText('study-lbl', sessionMode ? '⏹ استراحة' : '⏹ إيقاف الجلسة');
   G('timer-box').style.display='flex';
   renderClock();
   studyTick=setInterval(()=>{ 
     studySec = Math.floor((Date.now() - lastStudyTime) / 1000);
-    renderClock(); 
+    renderClock();
+    if (sessionMode) updateSessionInfo();
+    
+    // تحقق من وقت الاستراحة
+    if (sessionMode && studySec > 0 && studySec % sessionBreakTime === 0 && !isOnBreak && sessionRemaining - studySec > 0) {
+      isOnBreak = true;
+      pauseStudy();
+      toast(`⏰ استراحة! خذ ${Math.floor(sessionBreakTime/60)} دقائق`,'ok');
+      setTimeout(() => {
+        if (isOnBreak) {
+          isOnBreak = false;
+          toast('الاستراحة انتهت! ارجع للدراسة 💪','ok');
+        }
+      }, sessionBreakTime * 1000);
+    }
+    
     saveStudyState();
   }, 1000);
+}
+
+function pauseStudy() {
+  if (!studyActive) return;
+  clearInterval(studyTick);
+  G('study-btn').classList.remove('running');
+  setText('study-lbl', sessionMode ? '▶ استكمل الدراسة' : '▶ ابدأ الدراسة');
 }
 async function stopStudy(){
   studyActive=false; 
   clearInterval(studyTick);
   G('study-btn').classList.remove('running');
-  setText('study-lbl','▶ ابدأ الدراسة');
+  setText('study-lbl', sessionMode ? '▶ استكمل الدراسة' : '▶ ابدأ الدراسة');
   G('timer-box').style.display='none';
   
   localStorage.removeItem('mizan_study_sec');
@@ -637,7 +716,7 @@ async function stopStudy(){
     }
   }
   
-  await setDoc(doc(collection(db,'sessions')),{ uid, squadId, subject:subj, seconds:studySec, pts, ts:serverTimestamp() });
+  await setDoc(doc(collection(db,'sessions')),{ uid, squadId, subject:subj, seconds:studySec, pts, ts:serverTimestamp(), sessionMode, sessionTarget });
   flash('+'+pts+' ⚡'); 
   toast('أحسنت! +'+pts+' نقطة ('+subj+')','ok');
   studySec=0; 
@@ -857,8 +936,29 @@ select option{background:var(--c2)}
   padding:.9rem;margin-bottom:.6rem;animation:fadeUp .3s ease both}
 .chal-hd{font-size:.85rem;font-weight:700;color:var(--gold);margin-bottom:.5rem}
 .chal-pts{font-size:1.1rem;font-weight:800;color:var(--red);font-family:'IBM Plex Mono',monospace;margin-bottom:.4rem}
-.chal-status{font-size:.72rem;color:var(--ink3);margin-bottom:.6rem}
-.chal-time{font-size:.78rem;color:var(--amber);font-weight:600;margin-bottom:.5rem;display:flex;align-items:center;gap:.4rem}
+.session-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);
+  display:none;align-items:center;justify-content:center;z-index:999;backdrop-filter:blur(6px)}
+.session-content{background:var(--c1);border-radius:var(--r);padding:1.8rem;max-width:380px;
+  width:90%;animation:fadeUp .3s ease both}
+.session-hd{font-size:1.15rem;font-weight:900;color:var(--gold);margin-bottom:1.2rem;text-align:center}
+.session-field{margin-bottom:1.2rem}
+.session-field label{display:block;font-size:.8rem;font-weight:700;color:var(--ink2);margin-bottom:.5rem}
+.session-slider{width:100%;height:6px;border-radius:3px;background:var(--c2);outline:none;
+  -webkit-appearance:none;appearance:none;cursor:pointer}
+.session-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;
+  border-radius:50%;background:linear-gradient(135deg,var(--gold),var(--gd));cursor:pointer;box-shadow:0 0 10px rgba(242,184,48,.4)}
+.session-slider::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:linear-gradient(135deg,var(--gold),var(--gd));cursor:pointer;border:none;box-shadow:0 0 10px rgba(242,184,48,.4)}
+.session-value{text-align:center;font-size:1.2rem;font-weight:800;color:var(--gold);font-family:'IBM Plex Mono',monospace;margin-top:.6rem}
+
+#session-info{display:none;background:var(--c2);border:1px solid rgba(242,184,48,.15);border-radius:13px;
+  padding:1.2rem;margin-bottom:1rem;animation:fadeUp .3s ease both}
+.session-stat{display:flex;justify-content:space-between;align-items:center;margin-bottom:.8rem}
+.session-stat-label{font-size:.85rem;color:var(--ink2);font-weight:600}
+.session-stat-value{font-size:1.1rem;font-weight:800;color:var(--gold);font-family:'IBM Plex Mono',monospace}
+.session-progress{margin-top:1rem}
+.session-progress-label{font-size:.75rem;color:var(--ink3);margin-bottom:.5rem;display:flex;justify-content:space-between}
+.session-progress-bar{width:100%;height:8px;background:var(--c3);border-radius:4px;overflow:hidden}
+.session-progress-fill{height:100%;background:linear-gradient(90deg,var(--gd),var(--gold));border-radius:4px;width:0%;transition:width .3s ease}
 
 .challenge-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);
   display:none;align-items:center;justify-content:center;z-index:999;backdrop-filter:blur(6px)}
@@ -1140,21 +1240,46 @@ select option{background:var(--c2)}
   <div id="panel-study" style="display:none">
     <div class="card">
       <div class="sec-ttl">📚 جلسة الدراسة</div>
+      <button class="btn btn-p" onclick="openSessionModal()" style="margin-bottom:1rem">⏱ ابدأ جلسة مخطط لها</button>
       <span class="field-label">المادة الحالية</span>
       <select id="subj-sel"></select>
-      <div id="timer-box"><div id="clock">00:00:00</div></div>
-      <button id="study-btn" class="btn btn-study" onclick="toggleStudy()">
-        <span id="study-lbl">▶ ابدأ الدراسة</span>
-      </button>
-      <div class="pts-rule">دقيقة واحدة = نقطة واحدة لك وللفريق</div>
+
+```
+  <div id="session-info">
+    <div class="session-stat">
+      <span class="session-stat-label">📊 الهدف</span>
+      <span class="session-stat-value" id="session-target">—</span>
     </div>
-    <div class="tip-box">
-      <div class="tip-ttl">💡 كيف يشتغل نظام النقاط؟</div>
-      <div class="tip-li"><span>⚡</span><span>كل دقيقة تدرسها = نقطة فورية لك وللفريق</span></div>
-      <div class="tip-li"><span>🛡️</span><span>مساهمتك ترتفع بترتيب فريقك في التصنيف العام</span></div>
-      <div class="tip-li"><span>🔥</span><span>التحديث حي — يُرى من جميع أعضاء الفريق</span></div>
-      <div class="tip-li"><span>⚔️</span><span>تحديات الفريق تزيد النقاط المكتسبة</span></div>
+    <div class="session-stat">
+      <span class="session-stat-label">⏳ المتبقي</span>
+      <span class="session-stat-value" id="session-remaining">—</span>
     </div>
+    <div class="session-progress">
+      <div class="session-progress-label">
+        <span>التقدم</span>
+        <span id="session-progress-num">0%</span>
+      </div>
+      <div class="session-progress-bar">
+        <div class="session-progress-fill" id="session-progress-bar"></div>
+      </div>
+    </div>
+  </div>
+  
+  <div id="timer-box"><div id="clock">00:00:00</div></div>
+  <button id="study-btn" class="btn btn-study" onclick="toggleStudy()">
+    <span id="study-lbl">▶ ابدأ الدراسة</span>
+  </button>
+  <div class="pts-rule">دقيقة واحدة = نقطة واحدة لك وللفريق</div>
+</div>
+<div class="tip-box">
+  <div class="tip-ttl">💡 نظام الجلسات</div>
+  <div class="tip-li"><span>📅</span><span>اختر عدد ساعات الدراسة والاستراحة</span></div>
+  <div class="tip-li"><span>⏱</span><span>تنبيهات تلقائية للاستراحة كل فترة</span></div>
+  <div class="tip-li"><span>⚡</span><span>كل دقيقة = نقطة فورية</span></div>
+  <div class="tip-li"><span>🎯</span><span>متابعة مباشرة لتقدمك نحو الهدف</span></div>
+</div>
+```
+
   </div>
 
   <div id="panel-rank" style="display:none">
