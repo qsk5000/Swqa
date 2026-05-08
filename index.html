@@ -1350,6 +1350,28 @@ onAuthStateChanged(authCheck, u => {
     userInfo.style.display = 'none';
   }
 });
+  <!-- MODAL: SESSION SETUP -->
+<div id="session-modal" class="session-modal">
+  <div class="session-content">
+    <div class="session-hd">📅 ضبط جلسة الدراسة</div>
+    
+    <div class="session-field">
+      <label>⏱ مدة الدراسة (بالساعات)</label>
+      <input type="range" id="session-hours" class="session-slider" min="0.5" max="12" step="0.5" value="1" oninput="G('h-val').textContent = this.value">
+      <div class="session-value"><span id="h-val">1</span> ساعة</div>
+    </div>
+
+    <div class="session-field">
+      <label>☕ مدة الاستراحة (بالدقائق)</label>
+      <input type="range" id="session-break" class="session-slider" min="5" max="60" step="5" value="10" oninput="G('b-val').textContent = this.value">
+      <div class="session-value"><span id="b-val">10</span> دقيقة</div>
+    </div>
+
+    <button class="btn btn-p" onclick="startSession()">🎯 ابدأ الجلسة</button>
+    <button class="btn btn-g" onclick="closeSessionModal()">إلغاء</button>
+  </div>
+</div>
+
 </script>
 
 </body>
