@@ -119,6 +119,7 @@ window.doGoogleLogin = async () => {
     G('google-btn').disabled = true;
     G('google-btn').textContent = '⏳ جاري الاتصال بجوجل…';
     const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
     const result = await signInWithPopup(auth, provider);
     const user = result.user;
     const snap = await getDoc(doc(db,'users',user.uid));
@@ -133,9 +134,15 @@ window.doGoogleLogin = async () => {
         createdAt: serverTimestamp()
       });
     }
+    saveSession(user.email, 'google');
     toast('تم الدخول بنجاح! 🎉','ok');
   } catch(e) {
-    toast('خطأ في الدخول عبر جوجل','err');
+    const msg = e.code === 'auth/popup-blocked' ? 'تم حجب النافذة المنبثقة - حاول مرة أخرى' :
+                e.code === 'auth/popup-closed-by-user' ? 'تم إغلاق نافذة جوجل' :
+                e.code === 'auth/operation-not-supported-in-this-environment' ? 'هذا المتصفح لا يدعم جوجل' :
+                'خطأ في الدخول عبر جوجل: ' + e.message;
+    console.error('Google Auth Error:', e);
+    toast(msg,'err');
   } finally {
     G('google-btn').disabled = false;
     G('google-btn').textContent = '🔵 دخول بجوجل';
@@ -184,6 +191,7 @@ window.doGoogleSignup = async () => {
     G('signup-google-btn').disabled = true;
     G('signup-google-btn').textContent = '⏳ جاري الاتصال بجوجل…';
     const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
     const result = await signInWithPopup(auth, provider);
     const user = result.user;
     const snap = await getDoc(doc(db,'users',user.uid));
@@ -198,9 +206,15 @@ window.doGoogleSignup = async () => {
         createdAt: serverTimestamp()
       });
     }
+    saveSession(user.email, 'google');
     toast('تم التسجيل بنجاح! 🎉','ok');
   } catch(e) {
-    toast('خطأ في التسجيل عبر جوجل','err');
+    const msg = e.code === 'auth/popup-blocked' ? 'تم حجب النافذة المنبثقة - حاول مرة أخرى' :
+                e.code === 'auth/popup-closed-by-user' ? 'تم إغلاق نافذة جوجل' :
+                e.code === 'auth/operation-not-supported-in-this-environment' ? 'هذا المتصفح لا يدعم جوجل' :
+                'خطأ في التسجيل عبر جوجل: ' + e.message;
+    console.error('Google Auth Error:', e);
+    toast(msg,'err');
   } finally {
     G('signup-google-btn').disabled = false;
     G('signup-google-btn').textContent = '🔵 تسجيل بجوجل';
@@ -271,19 +285,12 @@ window.doJoin = async () => {
 };
 
 /* ═══ LOBBY: الفرق المتاحة ═══ */
-window.loadAvailableSquads = async () => {
-  const q = query(collection(db,'squads'), where('members', 'array-contains-any', []));
-  const snap = await getDoc(collection(db,'squads'));
-  try {
-    const allSnap = await fetch(`${db._key.projectId}`);
-  } catch {}
-  
-  // طريقة بديلة: قراءة كل الفرق والتصفية
+window.loadAvailableSquads = () => {
   onSnapshot(collection(db,'squads'), async snap => {
     const avail = [];
     for (const d of snap.docs) {
       const sq = d.data();
-      if (sq.members.length < 5 && !sq.members.includes(uid)) {
+      if (sq.members && sq.members.length < 5 && !sq.members.includes(uid)) {
         avail.push({ id: d.id, ...sq });
       }
     }
@@ -291,21 +298,21 @@ window.loadAvailableSquads = async () => {
     if (!el) return;
     el.innerHTML = '';
     if (avail.length === 0) {
-      el.innerHTML = '<div style="text-align:center;color:var(--ink3);padding:1rem">لا توجد فرق متاحة حالياً</div>';
+      el.innerHTML = '<div style="text-align:center;color:var(--ink3);padding:1rem;font-size:.85rem">لا توجد فرق متاحة حالياً 🏁</div>';
       return;
     }
     avail.forEach(sq => {
-      const spots = 5 - sq.members.length;
+      const spots = 5 - (sq.members?.length || 0);
       el.innerHTML += `<div class="avail-sq">
         <div class="as-hd">
-          <span class="as-badge">${sq.badge}</span>
+          <span class="as-badge">${sq.badge || '🛡️'}</span>
           <span class="as-nm">${sq.name}</span>
         </div>
         <div class="as-info">
-          <span class="as-members">👥 ${sq.members.length}/5</span>
+          <span class="as-members">👥 ${sq.members?.length || 0}/5</span>
           <span class="as-pts">⚡ ${fmt(sq.totalPts||0)}</span>
         </div>
-        <button class="btn btn-t" style="margin:0" onclick="quickJoin('${sq.id}')">انضم الآن</button>
+        <button class="btn btn-t" style="margin:0;font-size:.85rem;padding:.7rem" onclick="quickJoin('${sq.id}')">انضم الآن</button>
       </div>`;
     });
   });
@@ -917,12 +924,12 @@ select option{background:var(--c2)}
   <input id="login-email" type="email" placeholder="بريدك الإلكتروني" autocomplete="email"/>
   <input id="login-pass" type="password" placeholder="كلمة السر" autocomplete="current-password"/>
   <button id="login-btn" class="btn btn-p" onclick="doLogin()">🔓 دخول</button>
-  <div style="display:flex;align-items:center;gap:.5rem;margin:.8rem 0;color:var(--ink3);font-size:.75rem">
+  <div style="display:flex;align-items:center;gap:.5rem;margin:.9rem 0;color:var(--ink3);font-size:.73rem">
     <div style="flex:1;height:1px;background:var(--br)"></div>
     أو
     <div style="flex:1;height:1px;background:var(--br)"></div>
   </div>
-  <button id="google-btn" class="btn btn-g" onclick="doGoogleLogin()" style="border-color:rgba(59,130,246,.3)">🔵 دخول بجوجل</button>
+  <button id="google-btn" class="btn" onclick="doGoogleLogin()" style="background:rgba(59,130,246,.12);border:1.5px solid rgba(59,130,246,.3);color:var(--blue);margin-bottom:.5rem">🔵 دخول بجوجل</button>
   <div class="auth-switch">
     ليس لديك حساب؟ 
     <a onclick="switchAuth('signup')">تسجيل جديد →</a>
@@ -946,12 +953,12 @@ select option{background:var(--c2)}
   </div>
   <input type="hidden" id="signup-branch" value="علمي"/>
   <button id="signup-btn" class="btn btn-p" onclick="doSignup()">🚀 تسجيل</button>
-  <div style="display:flex;align-items:center;gap:.5rem;margin:.8rem 0;color:var(--ink3);font-size:.75rem">
+  <div style="display:flex;align-items:center;gap:.5rem;margin:.9rem 0;color:var(--ink3);font-size:.73rem">
     <div style="flex:1;height:1px;background:var(--br)"></div>
     أو
     <div style="flex:1;height:1px;background:var(--br)"></div>
   </div>
-  <button id="signup-google-btn" class="btn btn-g" onclick="doGoogleSignup()" style="border-color:rgba(59,130,246,.3)">🔵 تسجيل بجوجل</button>
+  <button id="signup-google-btn" class="btn" onclick="doGoogleSignup()" style="background:rgba(59,130,246,.12);border:1.5px solid rgba(59,130,246,.3);color:var(--blue);margin-bottom:.5rem">🔵 تسجيل بجوجل</button>
   <div class="auth-switch">
     هل لديك حساب بالفعل؟ 
     <a onclick="switchAuth('login')">← دخول</a>
