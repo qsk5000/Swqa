@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>ميزان — Squads | السادس الإعدادي</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<script type="module">
+import { initializeApp }      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup }
+                               from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, doc, setDoc, getDoc, updateDoc, increment, deleteDoc,
+         onSnapshot, collection, query, orderBy, serverTimestamp, where }
+                               from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey:            "AIzaSyCY9GD6GtBuqBBerYjKETbI0Ftt_-oMshs",
+  authDomain:        "mizanacadyme.firebaseapp.com",
+  databaseURL:       "https://mizanacadyme-default-rtdb.firebaseio.com",
+  projectId:         "mizanacadyme",
+  storageBucket:     "mizanacadyme.firebasestorage.app",
+  messagingSenderId: "561300998665",
+  appId:             "1:561300998665:web:88e69e503c23da63e0c6d8",
+  measurementId:     "G-08606KYYNC"
+};
+
+const app  = initializeApp(firebaseConfig);
+const db   = getFirestore(app);
+const auth = getAuth(app);
+
+let uid         = null;
+let squadId     = null;
+let studyActive = false;
+let studySec    = 0;
+let studyTick   = null;
+let lastStudyTime = 0;
+
+const SUBJECTS = {
+  'علمي': ['📐 رياضيات','⚗️ كيمياء','🔬 فيزياء','🧬 أحياء','📖 عربي','🌍 إنجليزي'],
+  'أدبي': ['📖 عربي','🌍 إنجليزي','📜 تاريخ','🌐 جغرافية','💰 اقتصاد','⚖️ تربية وطنية']
+};
+const BADGES = ['🛡️','⚔️','🦅','🔥','🌟','💎','🦁','🚀','🏹','🌊','🐉','⚡'];
+
+/* ═══ PERSIST SESSION ═══ */
+function saveSession(e, p) {
+  localStorage.setItem('mizan_email', e);
+  localStorage.setItem('mizan_pass', p);
+}
+function clearSession() {
+  localStorage.removeItem('mizan_email');
+  localStorage.removeItem('mizan_pass');
+}
+
+/* ═══ AUTH ═══ */
+onAuthStateChanged(auth, async u => {
+  if (!u) {
+    const saved_e = localStorage.getItem('mizan_email');
+    const saved_p = localStorage.getItem('mizan_pass');
+    if (saved_e && saved_p) {
+      try {
+        await signInWithEmailAndPassword(auth, saved_e, saved_p);
+        return;
+      } catch {
+        clearSession();
+        goScreen('s-auth');
+      }
+    } else {
+      goScreen('s-auth');
+    }
+    return;
+  }
+  uid = u.uid;
+  await boot();
+});
+
+async function boot() {
+  const snap = await getDoc(doc(db,'users',uid));
+  if (!snap.exists()) { goScreen('s-register'); return; }
+  const d = snap.data();
+  if (!d.squadId) { prefillLobby(d); goScreen('s-lobby'); return; }
+  squadId = d.squadId;
+  goScreen('s-squad');
+  bootSquad();
+  restoreStudyTimer();
+}
+
+/* ═══ AUTH SCREENS ═══ */
+window.switchAuth = (mode) => {
+  G('auth-login').style.display = mode === 'login' ? 'block' : 'none';
+  G('auth-signup').style.display = mode === 'signup' ? 'block' : 'none';
+};
+
+window.doLogin = async () => {
+  const email = G('login-email').value.trim();
+  const pass  = G('login-pass').value;
+  if (!email || !pass) return toast('أدخل البريد وكلمة السر','err');
+  try {
+    G('login-btn').disabled = true;
+    G('login-btn').textContent = '⏳ جاري الدخول…';
+    await signInWithEmailAndPassword(auth, email, pass);
+    saveSession(email, pass);
+    toast('تم الدخول بنجاح! 🎉','ok');
+  } catch(e) {
+    const msg = e.code === 'auth/user-not-found' ? 'البريد غير موجود' :
+                e.code === 'auth/wrong-password' ? 'كلمة السر خاطئة' :
+                e.code === 'auth/invalid-email' ? 'البريد غير صحيح' : 'خطأ في الدخول';
+    toast(msg,'err');
+  } finally {
+    G('login-btn').disabled = false;
+    G('login-btn').textContent = '🔓 دخول';
+  }
+};
+
+window.doGoogleLogin = async () => {
+  try {
+    G('google-btn').disabled = true;
+    G('google-btn').textContent = '⏳ جاري الاتصال بجوجل…';
+    const provider = new GoogleAuthProvider();
+    const result = await signInWithPopup(auth, provider);
+    const user = result.user;
+    const snap = await getDoc(doc(db,'users',user.uid));
+    if (!snap.exists()) {
+      await setDoc(doc(db,'users',user.uid), {
+        name: user.displayName || 'طالب',
+        email: user.email,
+        branch: 'علمي',
+        totalPts: 0,
+        totalSec: 0,
+        squadId: null,
+        createdAt: serverTimestamp()
+      });
+    }
+    toast('تم الدخول بنجاح! 🎉','ok');
+  } catch(e) {
+    toast('خطأ في الدخول عبر جوجل','err');
+  } finally {
+    G('google-btn').disabled = false;
+    G('google-btn').textContent = '🔵 دخول بجوجل';
+  }
+};
+
+window.doSignup = async () => {
+  const name   = G('signup-name').value.trim();
+  const email  = G('signup-email').value.trim();
+  const pass   = G('signup-pass').value;
+  const pass2  = G('signup-pass2').value;
+  const branch = G('signup-branch').value;
+
+  if (!name || !email || !pass || !pass2) {
+    return toast('أملأ جميع الحقول','err');
+  }
+  if (pass.length < 6) {
+    return toast('كلمة السر يجب أن تكون 6 أحرف على الأقل','err');
+  }
+  if (pass !== pass2) {
+    return toast('كلمات السر غير متطابقة','err');
+  }
+
+  try {
+    G('signup-btn').disabled = true;
+    G('signup-btn').textContent = '⏳ جاري التسجيل…';
+    const res = await createUserWithEmailAndPassword(auth, email, pass);
+    await setDoc(doc(db,'users',res.user.uid), {
+      name, email, branch, totalPts:0, totalSec:0, squadId:null, createdAt:serverTimestamp()
+    });
+    saveSession(email, pass);
+    toast('تم التسجيل بنجاح! 🎉','ok');
+  } catch(e) {
+    const msg = e.code === 'auth/email-already-in-use' ? 'البريد مستخدم بالفعل' :
+                e.code === 'auth/invalid-email' ? 'البريد غير صحيح' :
+                e.code === 'auth/weak-password' ? 'كلمة السر ضعيفة' : 'خطأ في التسجيل';
+    toast(msg,'err');
+  } finally {
+    G('signup-btn').disabled = false;
+    G('signup-btn').textContent = '🚀 تسجيل';
+  }
+};
+
+window.doGoogleSignup = async () => {
+  try {
+    G('signup-google-btn').disabled = true;
+    G('signup-google-btn').textContent = '⏳ جاري الاتصال بجوجل…';
+    const provider = new GoogleAuthProvider();
+    const result = await signInWithPopup(auth, provider);
+    const user = result.user;
+    const snap = await getDoc(doc(db,'users',user.uid));
+    if (!snap.exists()) {
+      await setDoc(doc(db,'users',user.uid), {
+        name: user.displayName || 'طالب',
+        email: user.email,
+        branch: 'علمي',
+        totalPts: 0,
+        totalSec: 0,
+        squadId: null,
+        createdAt: serverTimestamp()
+      });
+    }
+    toast('تم التسجيل بنجاح! 🎉','ok');
+  } catch(e) {
+    toast('خطأ في التسجيل عبر جوجل','err');
+  } finally {
+    G('signup-google-btn').disabled = false;
+    G('signup-google-btn').textContent = '🔵 تسجيل بجوجل';
+  }
+};
+
+window.doLogout = async () => {
+  try {
+    clearSession();
+    await signOut(auth);
+    toast('تم تسجيل الخروج','ok');
+  } catch(e) {
+    toast('خطأ في الخروج','err');
+  }
+};
+
+/* ═══ REGISTER ═══ */
+window.doRegister = async () => {
+  const name   = G('r-name').value.trim();
+  const branch = G('r-branch').value;
+  if (!name) return toast('اكتب اسمك الكامل','err');
+  await updateDoc(doc(db,'users',uid), { name, branch });
+  prefillLobby({ name, branch });
+  toast('أهلاً ' + name + ' 🎉','ok');
+  goScreen('s-lobby');
+};
+
+function prefillLobby(d) {
+  G('lobby-hello').textContent  = 'مرحباً، ' + d.name + ' 👋';
+  G('lobby-branch').textContent = d.branch === 'علمي' ? '🔬 الفرع العلمي' : '📖 الفرع الأدبي';
+}
+
+/* ═══ CREATE ═══ */
+window.doCreate = async () => {
+  const name = G('c-name').value.trim();
+  if (!name || name.length > 22) return toast('اسم الفريق بين 2-22 حرف','err');
+  let code, exists=true, t=0;
+  while (exists && t<12) {
+    code = 'mizan' + Math.floor(1000+Math.random()*9000);
+    exists = (await getDoc(doc(db,'squads',code))).exists();
+    t++;
+  }
+  const badge = BADGES[Math.floor(Math.random()*BADGES.length)];
+  await setDoc(doc(db,'squads',code), { 
+    name, badge, code, members:[uid], totalPts:0, totalSec:0, 
+    createdAt:serverTimestamp(), activeChallenges:[], completedChallenges:[] 
+  });
+  await updateDoc(doc(db,'users',uid), { squadId:code });
+  squadId = code;
+  goScreen('s-squad'); bootSquad();
+  toast('تم إنشاء الفريق! 🛡️','ok');
+};
+
+/* ═══ JOIN ═══ */
+window.doJoin = async () => {
+  let raw = G('j-code').value.trim().toLowerCase().replace(/\s/g,'');
+  const code = raw.startsWith('mizan') ? raw : 'mizan'+raw;
+  const snap = await getDoc(doc(db,'squads',code));
+  if (!snap.exists()) return toast('الكود غير صحيح ❌','err');
+  const sq = snap.data();
+  if (sq.members.length >= 5) return toast('الفريق ممتلئ (5/5)','err');
+  if (sq.members.includes(uid)) return toast('أنت في الفريق بالفعل','warn');
+  await updateDoc(doc(db,'squads',code), { members:[...sq.members,uid] });
+  await updateDoc(doc(db,'users',uid), { squadId:code });
+  squadId = code;
+  goScreen('s-squad'); bootSquad();
+  toast('انضممت لـ '+ sq.name +' 🎯','ok');
+};
+
+/* ═══ LOBBY: الفرق المتاحة ═══ */
+window.loadAvailableSquads = async () => {
+  const q = query(collection(db,'squads'), where('members', 'array-contains-any', []));
+  const snap = await getDoc(collection(db,'squads'));
+  try {
+    const allSnap = await fetch(`${db._key.projectId}`);
+  } catch {}
+  
+  // طريقة بديلة: قراءة كل الفرق والتصفية
+  onSnapshot(collection(db,'squads'), async snap => {
+    const avail = [];
+    for (const d of snap.docs) {
+      const sq = d.data();
+      if (sq.members.length < 5 && !sq.members.includes(uid)) {
+        avail.push({ id: d.id, ...sq });
+      }
+    }
+    const el = G('available-squads-wrap');
+    if (!el) return;
+    el.innerHTML = '';
+    if (avail.length === 0) {
+      el.innerHTML = '<div style="text-align:center;color:var(--ink3);padding:1rem">لا توجد فرق متاحة حالياً</div>';
+      return;
+    }
+    avail.forEach(sq => {
+      const spots = 5 - sq.members.length;
+      el.innerHTML += `<div class="avail-sq">
+        <div class="as-hd">
+          <span class="as-badge">${sq.badge}</span>
+          <span class="as-nm">${sq.name}</span>
+        </div>
+        <div class="as-info">
+          <span class="as-members">👥 ${sq.members.length}/5</span>
+          <span class="as-pts">⚡ ${fmt(sq.totalPts||0)}</span>
+        </div>
+        <button class="btn btn-t" style="margin:0" onclick="quickJoin('${sq.id}')">انضم الآن</button>
+      </div>`;
+    });
+  });
+};
+
+window.quickJoin = async (code) => {
+  const snap = await getDoc(doc(db,'squads',code));
+  if (!snap.exists()) return toast('الفريق محذوف','err');
+  const sq = snap.data();
+  if (sq.members.length >= 5) return toast('الفريق امتلأ','err');
+  if (sq.members.includes(uid)) return toast('أنت في الفريق بالفعل','warn');
+  await updateDoc(doc(db,'squads',code), { members:[...sq.members,uid] });
+  await updateDoc(doc(db,'users',uid), { squadId:code });
+  squadId = code;
+  goScreen('s-squad'); bootSquad();
+  toast('انضممت لـ '+ sq.name +' 🎯','ok');
+};
+
+/* ═══ SQUAD BOOT ═══ */
+function bootSquad() {
+  onSnapshot(doc(db,'squads',squadId), async snap => {
+    if (!snap.exists()) return;
+    const sq = snap.data();
+    setText('sq-name',  sq.badge+' '+sq.name);
+    setText('sq-code',  sq.code||squadId);
+    setText('sq-count', sq.members.length+'/5 أعضاء');
+    setText('sq-pts',   fmt(sq.totalPts||0));
+    setText('sq-hrs',   fmtH(sq.totalSec||0));
+    
+    // عرض التحديات النشطة
+    const chalWrap = G('challenges-wrap');
+    if (chalWrap) {
+      chalWrap.innerHTML = '';
+      if (sq.activeChallenges && sq.activeChallenges.length > 0) {
+        for (const chal of sq.activeChallenges) {
+          const oppSnap = await getDoc(doc(db,'squads',chal.opponentId));
+          const opp = oppSnap.data();
+          const status = chal.status || 'pending';
+          let statusBadge = status === 'pending' ? '⏳ في الانتظار' : 
+                            status === 'active' ? '🔥 جارٍ' : '✅ اكتمل';
+          chalWrap.innerHTML += `<div class="challenge-card">
+            <div class="chal-hd">${sq.badge} ${sq.name} VS ${opp.badge} ${opp.name}</div>
+            <div class="chal-pts">⚡ ${chal.team1Pts||0} - ${chal.team2Pts||0}</div>
+            <div class="chal-status">${statusBadge}</div>
+            ${status === 'pending' && chal.opponentId !== squadId ? 
+              `<button class="btn btn-t" style="margin:0" onclick="acceptChallenge('${chal.id}')">قبول التحدي</button>` : ''}
+          </div>`;
+        }
+      } else {
+        chalWrap.innerHTML = '<div style="text-align:center;color:var(--ink3);padding:1rem">لا توجد تحديات حالياً</div>';
+      }
+    }
+    
+    const wrap = G('members-wrap'); 
+    if (wrap) {
+      wrap.innerHTML='';
+      for (const mid of sq.members) {
+        const us = await getDoc(doc(db,'users',mid));
+        if (!us.exists()) continue;
+        const u = us.data(), me = mid===uid;
+        const pct = sq.totalPts ? Math.round((u.totalPts||0)/sq.totalPts*100) : 0;
+        const d = document.createElement('div');
+        d.className = 'mc'+(me?' is-me':'');
+        d.innerHTML = `
+          <div class="mc-av">${u.name[0]}</div>
+          <div class="mc-body">
+            <div class="mc-name">${u.name}${me?'<span class="me-chip">أنت</span>':''}</div>
+            <div class="mc-sub">${u.branch==='علمي'?'🔬 علمي':'📖 أدبي'} · السادس الإعدادي</div>
+            <div class="mc-bar"><div class="mc-fill" style="width:${pct}%"></div></div>
+          </div>
+          <div class="mc-r">
+            <div class="mc-pts">⚡${fmt(u.totalPts||0)}</div>
+            <div class="mc-hrs">${fmtH(u.totalSec||0)}</div>
+          </div>`;
+        wrap.appendChild(d);
+      }
+    }
+  });
+
+  const lbQ = query(collection(db,'squads'), orderBy('totalPts','desc'));
+  onSnapshot(lbQ, snap => {
+    const el = G('lb-wrap'); 
+    if (!el) return;
+    el.innerHTML='';
+    const M = ['🥇','🥈','🥉'];
+    snap.docs.forEach((d,i)=>{
+      const sq=d.data(), mine=d.id===squadId;
+      el.innerHTML += `<div class="lb-row${mine?' mine':''}">
+        <span class="lb-pos">${M[i]||'#'+(i+1)}</span>
+        <div class="lb-mid"><span class="lb-nm">${sq.badge} ${sq.name}</span><span class="lb-ct">${(sq.members||[]).length} أعضاء</span></div>
+        <div class="lb-end"><span class="lb-p">⚡${fmt(sq.totalPts||0)}</span><span class="lb-h">⏱${fmtH(sq.totalSec||0)}</span></div>
+      </div>`;
+    });
+    if(snap.empty) el.innerHTML='<div class="lb-empty">لا توجد فرق بعد 🏁</div>';
+  });
+
+  onSnapshot(doc(db,'users',uid), snap => {
+    if(!snap.exists()) return;
+    const u=snap.data();
+    setText('my-pts', fmt(u.totalPts||0));
+    setText('my-hrs', fmtH(u.totalSec||0));
+    const sel=G('subj-sel'); 
+    if (sel) {
+      sel.innerHTML='';
+      (SUBJECTS[u.branch]||SUBJECTS['علمي']).forEach(s=>{
+        const o=document.createElement('option'); o.value=s; o.textContent=s; sel.appendChild(o);
+      });
+    }
+  });
+}
+
+/* ═══ CHALLENGES ═══ */
+window.openChallengeModal = () => {
+  G('challenge-modal').style.display = 'flex';
+  loadOpponentSquads();
+};
+window.closeChallengeModal = () => {
+  G('challenge-modal').style.display = 'none';
+};
+async function loadOpponentSquads() {
+  const wrap = G('opponent-squads-wrap');
+  wrap.innerHTML = '';
+  onSnapshot(collection(db,'squads'), snap => {
+    snap.docs.forEach(d => {
+      if (d.id === squadId) return;
+      const sq = d.data();
+      wrap.innerHTML += `<div class="opp-card">
+        <div class="opp-nm">${sq.badge} ${sq.name}</div>
+        <div class="opp-info">👥 ${sq.members.length}/5 · ⚡ ${fmt(sq.totalPts||0)}</div>
+        <button class="btn btn-p" style="margin:0;font-size:.85rem" onclick="sendChallenge('${d.id}')">تحدي</button>
+      </div>`;
+    });
+  });
+}
+window.sendChallenge = async (oppId) => {
+  const sq = (await getDoc(doc(db,'squads',squadId))).data();
+  const oppSq = (await getDoc(doc(db,'squads',oppId))).data();
+  const chalId = Math.random().toString(36).substr(2,9);
+  await setDoc(doc(db,'challenges',chalId), {
+    id: chalId,
+    team1Id: squadId,
+    team1Name: sq.name,
+    team1Badge: sq.badge,
+    team1Pts: 0,
+    team2Id: oppId,
+    team2Name: oppSq.name,
+    team2Badge: oppSq.badge,
+    team2Pts: 0,
+    status: 'pending',
+    createdAt: serverTimestamp(),
+    endsAt: new Date(Date.now() + 7*24*60*60*1000).toISOString()
+  });
+  await updateDoc(doc(db,'squads',squadId), {
+    activeChallenges: [...(sq.activeChallenges||[]), {id:chalId, opponentId:oppId, status:'pending', team1Pts:0, team2Pts:0}]
+  });
+  await updateDoc(doc(db,'squads',oppId), {
+    activeChallenges: [...(oppSq.activeChallenges||[]), {id:chalId, opponentId:squadId, status:'pending', team1Pts:0, team2Pts:0}]
+  });
+  closeChallengeModal();
+  toast('تم إرسال التحدي! 🎯','ok');
+};
+
+window.acceptChallenge = async (chalId) => {
+  const chal = (await getDoc(doc(db,'challenges',chalId))).data();
+  await updateDoc(doc(db,'challenges',chalId), { status: 'active' });
+  
+  const sq = (await getDoc(doc(db,'squads',squadId))).data();
+  const updated = sq.activeChallenges.map(c => 
+    c.id === chalId ? {...c, status:'active'} : c
+  );
+  await updateDoc(doc(db,'squads',squadId), { activeChallenges: updated });
+  
+  const oppSq = (await getDoc(doc(db,'squads',chal.team1Id))).data();
+  const oppUpdated = oppSq.activeChallenges.map(c => 
+    c.id === chalId ? {...c, status:'active'} : c
+  );
+  await updateDoc(doc(db,'squads',chal.team1Id), { activeChallenges: oppUpdated });
+  
+  toast('تم قبول التحدي! 🔥','ok');
+};
+
+/* ═══ STUDY + TIMER PERSIST ═══ */
+function saveStudyState() {
+  localStorage.setItem('mizan_study_sec', studySec);
+  localStorage.setItem('mizan_study_time', Date.now());
+}
+function restoreStudyTimer() {
+  const saved = localStorage.getItem('mizan_study_sec');
+  const savedTime = localStorage.getItem('mizan_study_time');
+  if (saved && savedTime) {
+    const elapsed = Math.floor((Date.now() - parseInt(savedTime)) / 1000);
+    studySec = parseInt(saved) + elapsed;
+    lastStudyTime = Date.now() - studySec * 1000;
+    if (studySec >= 60) {
+      startStudy(); // استكمال الجلسة
+    }
+  }
+}
+window.toggleStudy = ()=>{ studyActive?stopStudy():startStudy(); };
+function startStudy(){
+  studyActive=true;
+  if (studySec === 0) studySec = 0;
+  lastStudyTime = Date.now() - studySec * 1000;
+  G('study-btn').classList.add('running');
+  setText('study-lbl','⏹ إيقاف الجلسة');
+  G('timer-box').style.display='flex';
+  renderClock();
+  studyTick=setInterval(()=>{ 
+    studySec = Math.floor((Date.now() - lastStudyTime) / 1000);
+    renderClock(); 
+    saveStudyState();
+  }, 1000);
+}
+async function stopStudy(){
+  studyActive=false; 
+  clearInterval(studyTick);
+  G('study-btn').classList.remove('running');
+  setText('study-lbl','▶ ابدأ الدراسة');
+  G('timer-box').style.display='none';
+  
+  localStorage.removeItem('mizan_study_sec');
+  localStorage.removeItem('mizan_study_time');
+  
+  if(studySec<60){ 
+    toast('الجلسة أقل من دقيقة — لم تُحتسب','warn'); 
+    studySec=0; 
+    renderClock();
+    return; 
+  }
+  
+  const pts=Math.floor(studySec/60), subj=G('subj-sel').value;
+  await updateDoc(doc(db,'users',uid),    { totalPts:increment(pts), totalSec:increment(studySec) });
+  await updateDoc(doc(db,'squads',squadId),{ totalPts:increment(pts), totalSec:increment(studySec) });
+  
+  // تحديث نقاط التحديات
+  const sq = (await getDoc(doc(db,'squads',squadId))).data();
+  if (sq.activeChallenges && sq.activeChallenges.length > 0) {
+    for (const chal of sq.activeChallenges) {
+      if (chal.status === 'active') {
+        const chalDoc = await getDoc(doc(db,'challenges',chal.id));
+        const chalData = chalDoc.data();
+        if (chalData.team1Id === squadId) {
+          await updateDoc(doc(db,'challenges',chal.id), { team1Pts: increment(pts) });
+        } else {
+          await updateDoc(doc(db,'challenges',chal.id), { team2Pts: increment(pts) });
+        }
+      }
+    }
+  }
+  
+  await setDoc(doc(collection(db,'sessions')),{ uid, squadId, subject:subj, seconds:studySec, pts, ts:serverTimestamp() });
+  flash('+'+pts+' ⚡'); 
+  toast('أحسنت! +'+pts+' نقطة ('+subj+')','ok');
+  studySec=0; 
+  renderClock();
+}
+function renderClock(){
+  const h=String(Math.floor(studySec/3600)).padStart(2,'0');
+  const m=String(Math.floor(studySec%3600/60)).padStart(2,'0');
+  const s=String(studySec%60).padStart(2,'0');
+  setText('clock',h+':'+m+':'+s);
+}
+function flash(t){ const e=G('pts-flash'); e.textContent=t; e.classList.add('on'); setTimeout(()=>e.classList.remove('on'),2200); }
+
+/* ═══ HELPERS ═══ */
+window.copyCode = ()=>{ navigator.clipboard.writeText(G('sq-code').textContent).then(()=>toast('تم النسخ 📋','ok')); };
+window.switchTab= tab=>{
+  ['team','study','rank','challenges'].forEach(t=>{
+    const panel = G('panel-'+t);
+    const tabEl = G('tab-'+t);
+    if (panel) panel.style.display=t===tab?'block':'none';
+    if (tabEl) tabEl.classList.toggle('on',t===tab);
+  });
+};
+window.toggleForm=w=>{
+  const c=G('form-c'), j=G('form-j'), av=G('form-av');
+  if(w==='c'){ c.style.display=c.style.display==='none'?'block':'none'; j.style.display='none'; if(av) av.style.display='none'; }
+  else if(w==='j'){ j.style.display=j.style.display==='none'?'block':'none'; c.style.display='none'; if(av) av.style.display='none'; }
+  else { 
+    if(av) {
+      av.style.display=av.style.display==='none'?'block':'none';
+      if(av.style.display==='block') loadAvailableSquads();
+    }
+    c.style.display='none'; 
+    j.style.display='none'; 
+  }
+};
+function goScreen(id){
+  ['s-auth','s-register','s-lobby','s-squad'].forEach(s=>G(s).style.display='none');
+  G(id).style.display='block';
+}
+const G       = id => document.getElementById(id);
+const setText = (id,v)=>{ const e=G(id); if(e) e.textContent=v; };
+const fmt     = n => n>=1000?(n/1000).toFixed(1)+'K':String(n);
+const fmtH    = s => s>=3600?(s/3600).toFixed(1)+'س':s>=60?Math.floor(s/60)+'د':s+'ث';
+window.toast  = (msg,type='info')=>{
+  const t=G('toast'); t.textContent=msg; t.className='toast show t-'+type;
+  clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),3000);
+};
+</script>
+
+<style>
+:root{
+  --bg:    #06080f;
+  --c1:    #0f1624;
+  --c2:    #162035;
+  --c3:    #1e2d48;
+  --gold:  #f2b830;
+  --gd:    #d4950a;
+  --glow:  rgba(242,184,48,.16);
+  --teal:  #2dd4bf;
+  --blue:  #60a5fa;
+  --green: #4ade80;
+  --red:   #f87171;
+  --amber: #fbbf24;
+  --ink:   #e2e8f8;
+  --ink2:  #94a3b8;
+  --ink3:  #475569;
+  --br:    rgba(255,255,255,.055);
+  --r:     15px;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{font-family:'Tajawal',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;direction:rtl;overflow-x:hidden}
+
+/* layered bg */
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse 80% 55% at 8% -5%,  rgba(242,184,48,.07) 0%,transparent 52%),
+    radial-gradient(ellipse 55% 45% at 92% 98%, rgba(45,212,191,.05) 0%,transparent 55%),
+    radial-gradient(ellipse 40% 30% at 50% 50%, rgba(96,165,250,.03) 0%,transparent 58%);}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(var(--br) 1px,transparent 1px),linear-gradient(90deg,var(--br) 1px,transparent 1px);
+  background-size:56px 56px;}
+
+/* ── TOPBAR ── */
+.topbar{position:sticky;top:0;z-index:300;display:flex;align-items:center;justify-content:space-between;
+  padding:.85rem 1.3rem;background:rgba(6,8,15,.84);backdrop-filter:blur(24px) saturate(180%);border-bottom:1px solid var(--br);}
+.brand{display:flex;align-items:center;gap:.65rem}
+.brand-logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--gold),var(--gd));
+  display:flex;align-items:center;justify-content:center;font-size:1.1rem;font-weight:900;color:#06080f;
+  box-shadow:0 0 18px var(--glow);flex-shrink:0;}
+.brand-name{font-size:1.07rem;font-weight:900;letter-spacing:-.3px;
+  background:linear-gradient(135deg,var(--gold) 40%,#fff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.brand-tag{font-size:.63rem;color:var(--ink3);font-weight:500;margin-top:.1rem}
+.top-pill{font-size:.68rem;color:var(--ink3);background:var(--c1);border:1px solid var(--br);
+  padding:.25rem .75rem;border-radius:20px;font-family:'IBM Plex Mono',monospace;white-space:nowrap;}
+.top-logout{background:none;border:none;color:var(--ink3);font-size:.72rem;cursor:pointer;
+  padding:.4rem .8rem;border-radius:6px;transition:all .2s;font-family:'Tajawal',sans-serif;font-weight:700;}
+.top-logout:hover{color:var(--red);background:rgba(248,113,113,.1)}
+
+/* ── WRAP ── */
+.wrap{position:relative;z-index:1;max-width:460px;margin:0 auto;padding:1.4rem 1rem 6rem}
+
+/* ── AUTH SCREENS ── */
+#s-auth{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.auth-container{width:100%;max-width:380px}
+.auth-hero{text-align:center;margin-bottom:2rem;animation:fadeUp .5s ease both}
+.auth-icon{font-size:3.2rem;display:block;margin-bottom:.8rem;animation:float 3.5s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+.auth-title{font-size:1.8rem;font-weight:900;
+  background:linear-gradient(145deg,var(--gold) 25%,rgba(255,255,255,.9));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:.6rem;}
+.auth-sub{font-size:.85rem;color:var(--ink2);line-height:1.6}
+
+.auth-form{background:var(--c1);border:1px solid var(--br);border-radius:var(--r);
+  padding:1.8rem;margin-bottom:1rem;animation:fadeUp .45s ease both}
+.auth-form h3{font-size:.95rem;font-weight:800;color:var(--gold);margin-bottom:1.2rem;display:flex;align-items:center;gap:.6rem}
+.auth-form input{width:100%;background:var(--c2);border:1.5px solid var(--br);border-radius:10px;
+  color:var(--ink);font-family:'Tajawal',sans-serif;font-size:.92rem;padding:.82rem 1rem;
+  margin-bottom:.8rem;outline:none;transition:border-color .2s,box-shadow .2s;direction:rtl;}
+.auth-form input:focus{border-color:rgba(242,184,48,.45);box-shadow:0 0 0 3px rgba(242,184,48,.07)}
+.auth-form input::placeholder{color:var(--ink3)}
+
+.branch-row{display:grid;grid-template-columns:1fr 1fr;gap:.7rem;margin-bottom:1rem}
+.bb{background:var(--c2);border:2px solid var(--br);border-radius:12px;
+  padding:1.1rem .5rem;text-align:center;cursor:pointer;
+  transition:all .2s;color:var(--ink2);font-family:'Tajawal',sans-serif;font-size:.87rem;font-weight:700;}
+.bb .bi{font-size:1.7rem;display:block;margin-bottom:.35rem}
+.bb:hover{border-color:rgba(242,184,48,.3);background:var(--c3)}
+.bb.sel{border-color:var(--gold);background:rgba(242,184,48,.08);color:var(--gold);box-shadow:0 0 0 3px rgba(242,184,48,.1)}
+
+.auth-switch{text-align:center;font-size:.85rem;color:var(--ink2);margin-top:1.2rem}
+.auth-switch a{color:var(--gold);text-decoration:none;font-weight:700;cursor:pointer}
+.auth-switch a:hover{text-decoration:underline}
+
+/* ── CARD ── */
+.card{background:var(--c1);border:1px solid var(--br);border-radius:var(--r);padding:1.35rem;
+  margin-bottom:.9rem;box-shadow:0 6px 32px rgba(0,0,0,.35);position:relative;overflow:hidden;
+  animation:fadeUp .45s ease both;}
+.card::before{content:'';position:absolute;top:0;right:0;width:130px;height:130px;
+  background:radial-gradient(circle,rgba(242,184,48,.04) 0%,transparent 70%);pointer-events:none;}
+@keyframes fadeUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+.sec-ttl{font-size:.92rem;font-weight:800;color:var(--gold);margin-bottom:1rem;display:flex;align-items:center;gap:.5rem}
+
+/* ── HERO ── */
+.hero{text-align:center;padding:2rem 1rem 1.4rem;animation:fadeUp .5s ease both}
+.h-icon{font-size:3.8rem;display:block;margin-bottom:.75rem;animation:float 3.5s ease-in-out infinite}
+.h-title{font-size:2rem;font-weight:900;line-height:1.2;
+  background:linear-gradient(145deg,var(--gold) 25%,rgba(255,255,255,.9));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:.5rem;}
+.h-sub{font-size:.87rem;color:var(--ink2);line-height:1.75;max-width:310px;margin:0 auto}
+
+/* ── INPUTS ── */
+input,select{width:100%;background:var(--c2);border:1.5px solid var(--br);border-radius:10px;
+  color:var(--ink);font-family:'Tajawal',sans-serif;font-size:.92rem;padding:.82rem 1rem;
+  margin-bottom:.7rem;outline:none;transition:border-color .2s,box-shadow .2s;direction:rtl;appearance:none;}
+input:focus,select:focus{border-color:rgba(242,184,48,.45);box-shadow:0 0 0 3px rgba(242,184,48,.07)}
+input::placeholder{color:var(--ink3)}
+select option{background:var(--c2)}
+.field-label{font-size:.78rem;color:var(--ink2);font-weight:600;margin-bottom:.35rem;display:block}
+
+.code-wrap{position:relative;margin-bottom:.7rem}
+.code-wrap input{padding-right:5.8rem;font-family:'IBM Plex Mono',monospace;letter-spacing:.5px;direction:ltr;text-align:left;margin-bottom:0}
+.code-pre{position:absolute;right:1rem;top:50%;transform:translateY(-50%);
+  font-family:'IBM Plex Mono',monospace;font-size:.82rem;font-weight:600;color:var(--gold);pointer-events:none;letter-spacing:.5px}
+
+/* ── BUTTONS ── */
+.btn{display:flex;align-items:center;justify-content:center;gap:.45rem;width:100%;
+  padding:.88rem 1.4rem;border-radius:11px;border:none;font-family:'Tajawal',sans-serif;
+  font-size:.97rem;font-weight:800;cursor:pointer;transition:all .18s;margin-bottom:.5rem;letter-spacing:.15px;}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+.btn-p{background:linear-gradient(135deg,var(--gold),var(--gd));color:#06080f}
+.btn-p:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 24px rgba(242,184,48,.32)}
+.btn-p:active{transform:none}
+.btn-g{background:var(--c2);color:var(--ink2);border:1.5px solid var(--br);font-size:.88rem}
+.btn-g:hover{border-color:rgba(242,184,48,.3);color:var(--gold)}
+.btn-t{background:rgba(45,212,191,.09);color:var(--teal);border:1.5px solid rgba(45,212,191,.2)}
+.btn-t:hover{background:rgba(45,212,191,.16)}
+.btn-study{background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;font-size:1.05rem;
+  padding:1.1rem;border-radius:13px;box-shadow:0 4px 16px rgba(34,197,94,.22)}
+.btn-study.running{background:linear-gradient(135deg,var(--red),#b91c1c);
+  box-shadow:0 4px 16px rgba(248,113,113,.22);animation:pr 1.6s infinite}
+@keyframes pr{0%,100%{box-shadow:0 0 0 0 rgba(248,113,113,.4)}50%{box-shadow:0 0 0 10px rgba(248,113,113,0)}}
+
+/* ── SQUAD HERO ── */
+.sq-hero{background:linear-gradient(135deg,rgba(242,184,48,.08),rgba(45,212,191,.04));
+  border:1px solid rgba(242,184,48,.15);border-radius:var(--r);padding:1.5rem 1.3rem;
+  text-align:center;margin-bottom:.9rem;position:relative;overflow:hidden;animation:fadeUp .4s ease both}
+.sq-hero::after{content:'';position:absolute;bottom:-30px;left:50%;transform:translateX(-50%);
+  width:220px;height:60px;background:radial-gradient(ellipse,rgba(242,184,48,.07) 0%,transparent 70%)}
+.sq-big{font-size:1.75rem;font-weight:900;color:var(--gold);margin-bottom:.3rem;line-height:1.2}
+.sq-meta{font-size:.75rem;color:var(--ink3);display:flex;align-items:center;justify-content:center;gap:.5rem}
+.dot{width:3px;height:3px;border-radius:50%;background:var(--ink3)}
+.code-pill{display:inline-flex;align-items:center;gap:.65rem;background:var(--c2);
+  border:1.5px dashed rgba(242,184,48,.25);border-radius:9px;padding:.5rem 1rem;margin:.75rem 0 .1rem}
+.cp-lbl{font-size:.68rem;color:var(--ink3)}
+.cp-val{font-family:'IBM Plex Mono',monospace;font-size:.92rem;font-weight:600;color:var(--gold);letter-spacing:.6px}
+.cp-btn{background:none;border:1px solid var(--br);color:var(--ink3);padding:.22rem .6rem;
+  border-radius:6px;font-family:'Tajawal',sans-serif;font-size:.72rem;cursor:pointer;transition:all .18s}
+.cp-btn:hover{border-color:var(--gold);color:var(--gold)}
+
+/* ── STATS 4 ── */
+.s4{display:grid;grid-template-columns:1fr 1fr;gap:.7rem;margin-bottom:.9rem}
+.sbox{background:var(--c1);border:1px solid var(--br);border-radius:13px;padding:1rem;text-align:center}
+.sv{font-size:1.65rem;font-weight:600;font-family:'IBM Plex Mono',monospace;color:var(--gold);line-height:1;margin-bottom:.3rem}
+.sl{font-size:.7rem;color:var(--ink3);font-weight:500}
+.sbox.tc .sv{color:var(--teal)} .sbox.bc .sv{color:var(--blue)} .sbox.gc .sv{color:var(--green)}
+
+/* ── TABS ── */
+.tabs{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:.3rem;background:var(--c1);
+  border:1px solid var(--br);border-radius:13px;padding:.3rem;margin-bottom:.9rem}
+.tab{padding:.58rem .3rem;border-radius:9px;text-align:center;font-size:.75rem;font-weight:700;
+  cursor:pointer;transition:all .18s;color:var(--ink3);border:none;background:none;font-family:'Tajawal',sans-serif}
+.tab.on{background:var(--c2);color:var(--gold);box-shadow:0 2px 10px rgba(0,0,0,.3)}
+
+/* ── CHALLENGES ── */
+.challenge-card{background:var(--c2);border:1.5px solid rgba(248,113,113,.3);border-radius:11px;
+  padding:.9rem;margin-bottom:.6rem;animation:fadeUp .3s ease both}
+.chal-hd{font-size:.85rem;font-weight:700;color:var(--gold);margin-bottom:.5rem}
+.chal-pts{font-size:1.1rem;font-weight:800;color:var(--red);font-family:'IBM Plex Mono',monospace;margin-bottom:.4rem}
+.chal-status{font-size:.72rem;color:var(--ink3);margin-bottom:.6rem}
+
+.challenge-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);
+  display:none;align-items:center;justify-content:center;z-index:999;backdrop-filter:blur(6px)}
+.modal-content{background:var(--c1);border-radius:var(--r);padding:1.5rem;max-width:380px;
+  width:90%;max-height:70vh;overflow-y:auto}
+.modal-hd{font-size:1.1rem;font-weight:900;color:var(--gold);margin-bottom:1rem;display:flex;justify-content:space-between;align-items:center}
+.modal-close{background:none;border:none;color:var(--ink3);font-size:1.3rem;cursor:pointer}
+.opp-card{background:var(--c2);border:1px solid var(--br);border-radius:11px;
+  padding:.9rem;margin-bottom:.6rem;animation:fadeUp .3s ease both}
+.opp-nm{font-size:.88rem;font-weight:700;color:var(--ink);margin-bottom:.4rem}
+.opp-info{font-size:.75rem;color:var(--ink3);margin-bottom:.6rem}
+
+/* ── MEMBERS ── */
+.mc{display:flex;align-items:center;gap:.8rem;background:var(--c2);border:1px solid var(--br);
+  border-radius:12px;padding:.9rem;margin-bottom:.55rem;transition:border-color .2s,transform .15s;animation:fadeUp .4s ease both}
+.mc:hover{transform:translateY(-1px)}
+.mc.is-me{border-color:rgba(242,184,48,.36);background:rgba(242,184,48,.04)}
+.mc-av{width:40px;height:40px;border-radius:50%;flex-shrink:0;
+  background:linear-gradient(135deg,var(--gold),var(--gd));color:#06080f;font-size:1.15rem;font-weight:900;
+  display:flex;align-items:center;justify-content:center}
+.mc-body{flex:1;min-width:0}
+.mc-name{font-size:.9rem;font-weight:700;display:flex;align-items:center;gap:.4rem;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.me-chip{font-size:.62rem;background:rgba(242,184,48,.14);color:var(--gold);padding:.1rem .45rem;
+  border-radius:20px;border:1px solid rgba(242,184,48,.28);flex-shrink:0}
+.mc-sub{font-size:.7rem;color:var(--ink3);margin:.18rem 0 .45rem}
+.mc-bar{height:3px;background:var(--c3);border-radius:4px;overflow:hidden}
+.mc-fill{height:100%;background:linear-gradient(90deg,var(--gd),var(--gold));border-radius:4px;transition:width .7s ease}
+.mc-r{text-align:left;flex-shrink:0}
+.mc-pts{font-size:.82rem;font-weight:700;color:var(--gold);font-family:'IBM Plex Mono',monospace}
+.mc-hrs{font-size:.7rem;color:var(--ink3);margin-top:.2rem}
+
+/* ── LEADERBOARD ── */
+.lb-row{display:flex;align-items:center;gap:.7rem;background:var(--c2);border:1px solid var(--br);
+  border-radius:11px;padding:.85rem 1rem;margin-bottom:.5rem;transition:border-color .2s}
+.lb-row.mine{border-color:rgba(242,184,48,.4);background:rgba(242,184,48,.05)}
+.lb-pos{font-size:1.1rem;width:28px;text-align:center;flex-shrink:0}
+.lb-mid{flex:1;min-width:0}
+.lb-nm{font-size:.88rem;font-weight:700;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lb-ct{font-size:.7rem;color:var(--ink3)}
+.lb-end{text-align:left;flex-shrink:0}
+.lb-p{display:block;font-size:.8rem;font-weight:700;color:var(--gold);font-family:'IBM Plex Mono',monospace}
+.lb-h{display:block;font-size:.7rem;color:var(--ink3);margin-top:.15rem}
+.lb-empty{text-align:center;color:var(--ink3);font-size:.85rem;padding:2rem}
+
+/* ── AVAILABLE SQUADS ── */
+.avail-sq{background:var(--c2);border:1px solid rgba(45,212,191,.2);border-radius:11px;
+  padding:.9rem;margin-bottom:.6rem;animation:fadeUp .3s ease both}
+.as-hd{display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem}
+.as-badge{font-size:1.3rem}
+.as-nm{font-size:.88rem;font-weight:700;color:var(--ink)}
+.as-info{display:flex;justify-content:space-between;font-size:.75rem;color:var(--ink3);margin-bottom:.6rem}
+
+/* ── STUDY ── */
+#timer-box{display:none;align-items:center;justify-content:center;background:var(--c2);
+  border-radius:12px;padding:1.2rem;margin-bottom:.8rem;border:1px solid rgba(242,184,48,.1);position:relative;overflow:hidden}
+#timer-box::before{content:'';position:absolute;inset:0;
+  background:radial-gradient(ellipse at 50%,rgba(242,184,48,.05) 0%,transparent 65%)}
+#clock{font-family:'IBM Plex Mono',monospace;font-size:2.6rem;font-weight:600;color:var(--gold);
+  letter-spacing:5px;text-shadow:0 0 30px rgba(242,184,48,.4);position:relative;z-index:1}
+.pts-rule{font-size:.74rem;color:var(--ink3);text-align:center;margin-top:.5rem;
+  display:flex;align-items:center;justify-content:center;gap:.4rem}
+.pts-rule::before,.pts-rule::after{content:'';flex:1;height:1px;background:var(--br)}
+.tip-box{background:rgba(45,212,191,.05);border:1px solid rgba(45,212,191,.12);
+  border-radius:11px;padding:1rem;margin-top:.5rem}
+.tip-ttl{font-size:.8rem;font-weight:800;color:var(--teal);margin-bottom:.6rem}
+.tip-li{font-size:.78rem;color:var(--ink2);margin-bottom:.35rem;display:flex;gap:.4rem;align-items:flex-start;line-height:1.5}
+
+/* ── LOBBY ── */
+.lw{background:linear-gradient(135deg,rgba(242,184,48,.07),rgba(96,165,250,.04));
+  border:1px solid rgba(242,184,48,.12);border-radius:var(--r);padding:1.3rem;
+  text-align:center;margin-bottom:.9rem}
+.lw-n{font-size:1.3rem;font-weight:900;color:var(--gold);margin-bottom:.25rem}
+.lw-b{font-size:.8rem;color:var(--ink2)}
+.form-block{background:var(--c2);border:1px solid var(--br);border-radius:11px;padding:1.1rem;margin-top:.6rem;animation:fadeUp .3s ease both}
+.form-ttl{font-size:.85rem;font-weight:800;color:var(--ink2);margin-bottom:.75rem}
+.or{display:flex;align-items:center;gap:.5rem;color:var(--ink3);font-size:.78rem;margin:.4rem 0}
+.or::before,.or::after{content:'';flex:1;height:1px;background:var(--br)}
+
+/* ── FLASH / TOAST ── */
+#pts-flash{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.4);
+  font-size:2.8rem;font-weight:900;color:var(--gold);pointer-events:none;opacity:0;z-index:999;
+  transition:all .35s cubic-bezier(.34,1.56,.64,1);font-family:'IBM Plex Mono',monospace;
+  text-shadow:0 0 40px rgba(242,184,48,.7)}
+#pts-flash.on{opacity:1;transform:translate(-50%,-65%) scale(1)}
+.toast{position:fixed;bottom:1.6rem;left:50%;transform:translateX(-50%) translateY(90px);
+  background:var(--c1);border:1px solid var(--br);color:var(--ink);padding:.7rem 1.5rem;
+  border-radius:40px;font-size:.88rem;font-weight:700;z-index:800;white-space:nowrap;
+  box-shadow:0 8px 36px rgba(0,0,0,.55);transition:transform .3s cubic-bezier(.34,1.56,.64,1)}
+.toast.show{transform:translateX(-50%) translateY(0)}
+.toast.t-ok  {border-color:rgba(74,222,128,.35);color:var(--green)}
+.toast.t-err {border-color:rgba(248,113,113,.35);color:var(--red)}
+.toast.t-warn{border-color:rgba(251,191,36,.35) ;color:var(--amber)}
+
+@media(max-width:380px){
+  .h-title{font-size:1.8rem} .sq-big{font-size:1.5rem}
+  #clock{font-size:2rem;letter-spacing:3px} .sv{font-size:1.4rem}
+  .auth-title{font-size:1.6rem}
+  .tabs{grid-template-columns:1fr 1fr 1fr 1fr}
+  .tab{font-size:.6rem}
+}
+</style>
+
+</head>
+<body>
+
+<!-- TOPBAR -->
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-logo">م</div>
+    <div>
+      <div class="brand-name">ميزان</div>
+      <div class="brand-tag">منصة التعليم التفاعلي</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:.5rem">
+    <div class="top-pill" id="top-user-info" style="display:none">مسجّل</div>
+    <button class="top-logout" id="logout-btn" onclick="doLogout()" style="display:none">خروج</button>
+    <div class="top-pill" id="top-pill-alt">Squads · السادس</div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<!-- ══ AUTH ══ -->
+
+<div id="s-auth">
+  <div class="auth-container">
+    <div class="auth-hero">
+      <span class="auth-icon">🔐</span>
+      <div class="auth-title">ميزان Squads</div>
+      <p class="auth-sub">ادرس مع فريقك · تنافس مع الجميع</p>
+    </div>
+
+<div id="auth-login" class="auth-form">
+  <h3>🔓 تسجيل الدخول</h3>
+  <input id="login-email" type="email" placeholder="بريدك الإلكتروني" autocomplete="email"/>
+  <input id="login-pass" type="password" placeholder="كلمة السر" autocomplete="current-password"/>
+  <button id="login-btn" class="btn btn-p" onclick="doLogin()">🔓 دخول</button>
+  <div style="display:flex;align-items:center;gap:.5rem;margin:.8rem 0;color:var(--ink3);font-size:.75rem">
+    <div style="flex:1;height:1px;background:var(--br)"></div>
+    أو
+    <div style="flex:1;height:1px;background:var(--br)"></div>
+  </div>
+  <button id="google-btn" class="btn btn-g" onclick="doGoogleLogin()" style="border-color:rgba(59,130,246,.3)">🔵 دخول بجوجل</button>
+  <div class="auth-switch">
+    ليس لديك حساب؟ 
+    <a onclick="switchAuth('signup')">تسجيل جديد →</a>
+  </div>
+</div>
+
+<div id="auth-signup" class="auth-form" style="display:none">
+  <h3>🚀 تسجيل جديد</h3>
+  <input id="signup-name" type="text" placeholder="اسمك الكامل" autocomplete="name" maxlength="30"/>
+  <input id="signup-email" type="email" placeholder="بريدك الإلكتروني" autocomplete="email"/>
+  <input id="signup-pass" type="password" placeholder="كلمة السر (6 أحرف على الأقل)" autocomplete="new-password"/>
+  <input id="signup-pass2" type="password" placeholder="تأكيد كلمة السر" autocomplete="new-password"/>
+  <span class="field-label">اختر فرعك الدراسي</span>
+  <div class="branch-row">
+    <div class="bb" id="bb-signup-sci" onclick="pickSignupBranch('علمي')">
+      <span class="bi">🔬</span>الفرع العلمي
+    </div>
+    <div class="bb" id="bb-signup-lit" onclick="pickSignupBranch('أدبي')">
+      <span class="bi">📖</span>الفرع الأدبي
+    </div>
+  </div>
+  <input type="hidden" id="signup-branch" value="علمي"/>
+  <button id="signup-btn" class="btn btn-p" onclick="doSignup()">🚀 تسجيل</button>
+  <div style="display:flex;align-items:center;gap:.5rem;margin:.8rem 0;color:var(--ink3);font-size:.75rem">
+    <div style="flex:1;height:1px;background:var(--br)"></div>
+    أو
+    <div style="flex:1;height:1px;background:var(--br)"></div>
+  </div>
+  <button id="signup-google-btn" class="btn btn-g" onclick="doGoogleSignup()" style="border-color:rgba(59,130,246,.3)">🔵 تسجيل بجوجل</button>
+  <div class="auth-switch">
+    هل لديك حساب بالفعل؟ 
+    <a onclick="switchAuth('login')">← دخول</a>
+  </div>
+</div>
+
+  </div>
+</div>
+
+<!-- ══ REGISTER ══ -->
+
+<div id="s-register" style="display:none">
+  <div class="hero">
+    <span class="h-icon">🛡️</span>
+    <div class="h-title">إكمال الملف الشخصي</div>
+    <p class="h-sub">أخبرنا عن نفسك حتى نبدأ</p>
+  </div>
+  <div class="card">
+    <div class="sec-ttl">📝 بيانات إضافية</div>
+    <input id="r-name" type="text" placeholder="اسمك الكامل" autocomplete="off" maxlength="30"/>
+    <span class="field-label">اختر فرعك الدراسي</span>
+    <div class="branch-row">
+      <div class="bb" id="bb-sci" onclick="pickBranch('علمي')">
+        <span class="bi">🔬</span>الفرع العلمي
+      </div>
+      <div class="bb" id="bb-lit" onclick="pickBranch('أدبي')">
+        <span class="bi">📖</span>الفرع الأدبي
+      </div>
+    </div>
+    <input type="hidden" id="r-branch" value="علمي"/>
+    <button class="btn btn-p" onclick="doRegister()">✅ إكمال</button>
+  </div>
+</div>
+
+<!-- ══ LOBBY ══ -->
+
+<div id="s-lobby" style="display:none">
+  <div class="lw">
+    <div class="lw-n" id="lobby-hello">مرحباً 👋</div>
+    <div class="lw-b" id="lobby-branch"></div>
+  </div>
+  <div class="card">
+    <div class="sec-ttl">⚔️ انضم أو أنشئ فريقاً</div>
+    <button class="btn btn-p" onclick="toggleForm('c')">🛡️ أنشئ فريقاً جديداً</button>
+    <button class="btn btn-t" onclick="toggleForm('j')">🔗 انضم بكود دعوة</button>
+    <button class="btn btn-g" onclick="toggleForm('av')">🌐 تصفح الفرق المتاحة</button>
+
+<div id="form-c" class="form-block" style="display:none">
+  <div class="form-ttl">🛡️ إنشاء فريق جديد</div>
+  <input id="c-name" type="text" placeholder="اسم فريقك (مثل: ليوث ميزان)" maxlength="22" autocomplete="off"/>
+  <button class="btn btn-p" onclick="doCreate()">إنشاء الفريق</button>
+</div>
+
+<div id="form-j" class="form-block" style="display:none">
+  <div class="form-ttl">🔗 الانضمام بكود</div>
+  <div class="code-wrap">
+    <span class="code-pre">mizan</span>
+    <input id="j-code" type="text" placeholder="XXXX" maxlength="9" autocomplete="off"/>
+  </div>
+  <button class="btn btn-t" onclick="doJoin()">انضم للفريق</button>
+</div>
+
+<div id="form-av" class="form-block" style="display:none">
+  <div class="form-ttl">🌐 فرق متاحة للانضمام</div>
+  <div id="available-squads-wrap"></div>
+</div>
+
+  </div>
+</div>
+
+<!-- ══ SQUAD ══ -->
+
+<div id="s-squad" style="display:none">
+
+  <div class="sq-hero">
+    <div class="sq-big" id="sq-name">…</div>
+    <div class="sq-meta">
+      <span id="sq-count">—</span>
+      <span class="dot"></span><span>السادس الإعدادي</span>
+      <span class="dot"></span><span>ميزان</span>
+    </div>
+    <div class="code-pill">
+      <div><div class="cp-lbl">كود الدعوة</div><div class="cp-val" id="sq-code">—</div></div>
+      <button class="cp-btn" onclick="copyCode()">📋 نسخ</button>
+    </div>
+  </div>
+
+  <div class="s4">
+    <div class="sbox">      <div class="sv" id="sq-pts">0</div><div class="sl">⚡ نقاط الفريق</div></div>
+    <div class="sbox tc">   <div class="sv" id="sq-hrs">0</div><div class="sl">⏱ ساعات الفريق</div></div>
+    <div class="sbox bc">   <div class="sv" id="my-pts">0</div><div class="sl">⚡ نقاطي</div></div>
+    <div class="sbox gc">   <div class="sv" id="my-hrs">0</div><div class="sl">⏱ ساعاتي</div></div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab on" id="tab-team"  onclick="switchTab('team')">👥 الفريق</button>
+    <button class="tab"    id="tab-study" onclick="switchTab('study')">📚 دراسة</button>
+    <button class="tab"    id="tab-rank"  onclick="switchTab('rank')">🏆 تصنيف</button>
+    <button class="tab"    id="tab-challenges" onclick="switchTab('challenges')">⚔️ تحديات</button>
+  </div>
+
+  <div id="panel-team"><div id="members-wrap"></div></div>
+
+  <div id="panel-study" style="display:none">
+    <div class="card">
+      <div class="sec-ttl">📚 جلسة الدراسة</div>
+      <span class="field-label">المادة الحالية</span>
+      <select id="subj-sel"></select>
+      <div id="timer-box"><div id="clock">00:00:00</div></div>
+      <button id="study-btn" class="btn btn-study" onclick="toggleStudy()">
+        <span id="study-lbl">▶ ابدأ الدراسة</span>
+      </button>
+      <div class="pts-rule">دقيقة واحدة = نقطة واحدة لك وللفريق</div>
+    </div>
+    <div class="tip-box">
+      <div class="tip-ttl">💡 كيف يشتغل نظام النقاط؟</div>
+      <div class="tip-li"><span>⚡</span><span>كل دقيقة تدرسها = نقطة فورية لك وللفريق</span></div>
+      <div class="tip-li"><span>🛡️</span><span>مساهمتك ترتفع بترتيب فريقك في التصنيف العام</span></div>
+      <div class="tip-li"><span>🔥</span><span>التحديث حي — يُرى من جميع أعضاء الفريق</span></div>
+      <div class="tip-li"><span>⚔️</span><span>تحديات الفريق تزيد النقاط المكتسبة</span></div>
+    </div>
+  </div>
+
+  <div id="panel-rank" style="display:none">
+    <div class="sec-ttl" style="margin-bottom:.8rem">🏆 تصنيف جميع الفرق</div>
+    <div id="lb-wrap"></div>
+  </div>
+
+  <div id="panel-challenges" style="display:none">
+    <button class="btn btn-p" style="margin-bottom:1rem" onclick="openChallengeModal()">⚔️ تحدي فريق جديد</button>
+    <div id="challenges-wrap"></div>
+  </div>
+
+</div>
+</div>
+
+<!-- MODAL: CHALLENGES -->
+
+<div id="challenge-modal" class="challenge-modal">
+  <div class="modal-content">
+    <div class="modal-hd">
+      <span>⚔️ اختر فريقاً للتحدي</span>
+      <button class="modal-close" onclick="closeChallengeModal()">✕</button>
+    </div>
+    <div id="opponent-squads-wrap"></div>
+  </div>
+</div>
+
+<div id="pts-flash"></div>
+<div id="toast" class="toast"></div>
+
+<script>
+window.pickBranch = function(b){
+  document.getElementById('r-branch').value = b;
+  document.getElementById('bb-sci').classList.toggle('sel', b==='علمي');
+  document.getElementById('bb-lit').classList.toggle('sel', b==='أدبي');
+};
+window.pickSignupBranch = function(b){
+  document.getElementById('signup-branch').value = b;
+  document.getElementById('bb-signup-sci').classList.toggle('sel', b==='علمي');
+  document.getElementById('bb-signup-lit').classList.toggle('sel', b==='أدبي');
+};
+pickBranch('علمي');
+pickSignupBranch('علمي');
+
+import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+const authCheck = getAuth();
+onAuthStateChanged(authCheck, u => {
+  const logoutBtn = document.getElementById('logout-btn');
+  const userInfo = document.getElementById('top-user-info');
+  if (u) {
+    logoutBtn.style.display = 'block';
+    userInfo.style.display = 'block';
+  } else {
+    logoutBtn.style.display = 'none';
+    userInfo.style.display = 'none';
+  }
+});
+</script>
+
+</body>
+</html>
