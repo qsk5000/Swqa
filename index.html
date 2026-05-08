@@ -42,6 +42,34 @@ const SUBJECTS = {
   'علمي': ['📐 رياضيات','⚗️ كيمياء','🔬 فيزياء','🧬 أحياء','📖 عربي','🌍 إنجليزي'],
   'أدبي': ['📖 عربي','🌍 إنجليزي','📜 تاريخ','🌐 جغرافية','💰 اقتصاد','⚖️ تربية وطنية']
 };
+const mizanTips = [
+  // رسائل عن الاستمرارية
+  "عاش يدك يا بطل، تذكر أن تعب اليوم هو أساس راحة الـ 2026. استمر!",
+  "الاستمرارية هي السر.. مو مهم شكد درست، المهم ما انقطعت اليوم.",
+  "نص ساعة تركيز حقيقي أحسن من يوم كامل تصفح بدون فايدة. فخورين بيك.",
+  "عادي تحس بالتعب، المهم لا تستسلم. انت كدها!",
+  "الخطوات الصغيرة اللي تسويها اليوم، هي اللي راح تبني فرحتك يوم النتائج.",
+  
+  // رسائل واقعية عن التعب
+  "إذا حسيت بضغط، اخذ استراحة 10 دقائق، اشرب مي وارجع. لا تحرك أعصابك.",
+  "محد بينا بدأ وهو يعرف كل شيء، طبيعي تغلط وطبيعي تنسى. كمل وماراح يضيع تعبك.",
+  "ترا السادس رحلة مو سباق، المهم توصل للنهاية وانت مخلص اللي عليك.",
+  "لا تقارن فصلك الأول بفصل غيرك العاشر، كل واحد وطريقه وورقته.",
+  
+  // رسائل تشجيعية (ميزان)
+  "ميزان الأكاديمية فخور بيك، روح اخذ استراحة قصيرة وارجع بقوة.",
+  "عاشت إيدك على هذا الالتزام، الفريق محظوظ بوجودك وياه.",
+  "نقاطك اللي جمعتها اليوم هي دليل إنك أقرب لهدفك بخطوة كبيرة.",
+  "بطل! الـ 2026 تنتظرك ترفع راسك وراس أهلك.",
+  
+  // رسائل قوية (نصيحة أخ)
+  "تذكر ليش بدأت أول يوم.. لا تخلي تعب لحظة يضيع حلم سنين.",
+  "الندم على عدم الدراسة أصعب بهواية من تعب الدراسة نفسها. فكر بيها.",
+  "أنت جاي تبني مستقبلك بيدك، كل دقيقة تقضيها هنا هي استثمار بعمرك.",
+  "خليك أقوى من الظروف، السادس يحب الشخص الصبور."
+];
+
+
 const BADGES = ['🛡️','⚔️','🦅','🔥','🌟','💎','🦁','🚀','🏹','🌊','🐉','⚡'];
 
 /* ═══ PERSIST SESSION ═══ */
@@ -220,6 +248,54 @@ window.doGoogleSignup = async () => {
     G('signup-google-btn').textContent = '🔵 تسجيل بجوجل';
   }
 };
+/* ═══ LEAVE SQUAD ═══ */
+window.leaveSquad = async () => {
+  if (!confirm('هل أنت متأكد من مغادرة الفريق؟ ستفقد نقاطك داخل هذا الفريق.')) return;
+
+  try {
+    const userDoc = doc(db, 'users', uid);
+    const squadDoc = doc(db, 'squads', squadId);
+    
+    const sqSnap = await getDoc(squadDoc);
+    if (!sqSnap.exists()) return;
+    
+    const sqData = sqSnap.data();
+    const updatedMembers = (sqData.members || []).filter(mid => mid !== uid);
+
+    if (updatedMembers.length === 0) {
+      await deleteDoc(squadDoc);
+    } else {
+      await updateDoc(squadDoc, { members: updatedMembers });
+    }
+
+    await updateDoc(userDoc, { squadId: null });
+
+    // تصفير المتغيرات محلياً وتوجيه المستخدم
+    squadId = null;
+    toast('تمت مغادرة الفريق بنجاح ✅', 'ok');
+    goScreen('s-lobby');
+    
+  } catch (e) {
+    console.error('Leave Error:', e);
+    toast('خطأ في المغادرة، حاول مرة أخرى', 'err');
+  }
+};
+window.kickMember = async (memberId, memberName) => {
+  if (!confirm(`هل أنت متأكد من طرد "${memberName}" من الفريق؟`)) return;
+  try {
+    const squadDoc = doc(db, 'squads', squadId);
+    const targetUserDoc = doc(db, 'users', memberId);
+    const sqSnap = await getDoc(squadDoc);
+    const updatedMembers = sqSnap.data().members.filter(id => id !== memberId);
+    
+    await updateDoc(squadDoc, { members: updatedMembers });
+    await updateDoc(targetUserDoc, { squadId: null });
+    toast(`تم طرد ${memberName} بنجاح`, 'ok');
+  } catch (e) {
+    toast('حدث خطأ أثناء الطرد', 'err');
+  }
+};
+
 
 window.doLogout = async () => {
   try {
@@ -243,9 +319,17 @@ window.doRegister = async () => {
 };
 
 function prefillLobby(d) {
-  G('lobby-hello').textContent  = 'مرحباً، ' + d.name + ' 👋';
-  G('lobby-branch').textContent = d.branch === 'علمي' ? '🔬 الفرع العلمي' : '📖 الفرع الأدبي';
+    let title = "مكافح"; // اللقب الافتراضي
+    const totalPts = d.points || 0; // فرضاً أنك تخزن مجموع النقاط
+
+    if (totalPts > 1000) title = "أسطورة الـ 2026";
+    else if (totalPts > 500) title = "الدكتور"; 
+    else if (totalPts > 100) title = "المجتهد";
+
+    G('lobby-hello').textContent = `مرحباً، ${title} ${d.name} 👋`;
+    G('lobby-branch').textContent = d.branch === 'علمي' ? 'الفرع العلمي 🔬' : 'الفرع الأدبي 📖';
 }
+
 
 /* ═══ CREATE ═══ */
 window.doCreate = async () => {
@@ -343,89 +427,87 @@ function bootSquad() {
     setText('sq-hrs',   fmtH(sq.totalSec||0));
     
     // تحديث التحديات وحذف المنتهية
+        // تحديث التحديات وحذف المنتهية (التعديل الجديد للأداء)
     const chalWrap = G('challenges-wrap');
     if (chalWrap && sq.activeChallenges && sq.activeChallenges.length > 0) {
-      chalWrap.innerHTML = '';
       const now = new Date();
-      const validChallenges = [];
+      const validChallenges = sq.activeChallenges.filter(chal => now <= new Date(chal.endsAt));
       
-      for (const chal of sq.activeChallenges) {
-        const endTime = new Date(chal.endsAt);
-        // احفظ فقط التحديات الي ما انتهت بعد
-        if (now <= endTime) {
-          validChallenges.push(chal);
-        }
-      }
-      
-      // إذا في تحديات انتهت، حدّث Firebase
+      // إذا وجدنا تحديات منتهية، نحدث Firebase فوراً
       if (validChallenges.length < sq.activeChallenges.length) {
-        try {
-          await updateDoc(doc(db,'squads',squadId), { activeChallenges: validChallenges });
-        } catch(e) {
-          console.error('Error updating challenges:', e);
-        }
+        updateDoc(doc(db, 'squads', squadId), { activeChallenges: validChallenges }).catch(console.error);
       }
       
-      // عرض التحديات الباقية
       if (validChallenges.length === 0) {
         chalWrap.innerHTML = '<div style="text-align:center;color:var(--ink3);padding:1rem;font-size:.85rem">لا توجد تحديات حالياً 🏁</div>';
       } else {
-        for (const chal of validChallenges) {
-          try {
-            const oppSnap = await getDoc(doc(db,'squads',chal.opponentId));
-            if (!oppSnap.exists()) continue;
-            const opp = oppSnap.data();
-            const status = chal.status || 'pending';
-            let statusBadge = status === 'pending' ? '⏳ في الانتظار' : 
-                              status === 'active' ? '🔥 جارٍ' : '✅ اكتمل';
-            
-            const endTime = new Date(chal.endsAt);
-            const remaining = Math.max(0, Math.floor((endTime - now) / 1000));
-            const remainingHours = Math.floor(remaining / 3600);
-            const remainingMins = Math.floor((remaining % 3600) / 60);
-            const timeStr = remainingHours > 0 ? `${remainingHours}س ${remainingMins}د` : `${remainingMins}د`;
-            
-            chalWrap.innerHTML += `<div class="challenge-card">
+        // جلب بيانات الخصوم بطلبات متوازية سريعة
+        Promise.all(validChallenges.map(async (chal) => {
+          const oppSnap = await getDoc(doc(db, 'squads', chal.opponentId));
+          if (!oppSnap.exists()) return null;
+          
+          const opp = oppSnap.data();
+          const status = chal.status || 'pending';
+          let statusBadge = status === 'pending' ? '⏳ في الانتظار' : status === 'active' ? '🔥 جارٍ' : '✅ اكتمل';
+          
+          const remaining = Math.max(0, Math.floor((new Date(chal.endsAt) - now) / 1000));
+          const h = Math.floor(remaining / 3600);
+          const m = Math.floor((remaining % 3600) / 60);
+          const timeStr = h > 0 ? `${h}س ${m}د` : `${m}د`;
+
+          return `
+            <div class="challenge-card">
               <div class="chal-hd">${sq.badge} ${sq.name} VS ${opp.badge} ${opp.name}</div>
               <div class="chal-pts">⚡ ${chal.team1Pts||0} - ${chal.team2Pts||0}</div>
               <div class="chal-time">⏱ المتبقي: ${timeStr}</div>
               <div class="chal-status">${statusBadge}</div>
-              ${status === 'pending' && chal.opponentId !== squadId ? 
+              ${status === 'pending' && chal.opponentId === squadId ? 
                 `<button class="btn btn-t" style="margin:0;font-size:.85rem;padding:.7rem" onclick="acceptChallenge('${chal.id}')">قبول التحدي</button>` : ''}
             </div>`;
-          } catch(e) {
-            console.error('Error rendering challenge:', e);
-          }
-        }
+        })).then(results => {
+          chalWrap.innerHTML = results.filter(r => r !== null).join('');
+        });
       }
     } else {
       if (chalWrap) chalWrap.innerHTML = '<div style="text-align:center;color:var(--ink3);padding:1rem;font-size:.85rem">لا توجد تحديات حالياً 🏁</div>';
     }
+
     
     const wrap = G('members-wrap'); 
     if (wrap) {
       wrap.innerHTML='';
+      // فحص هل المستخدم الحالي هو قائد الفريق
+      const isLeader = sq.creatorId === uid; 
+
       for (const mid of sq.members) {
         const us = await getDoc(doc(db,'users',mid));
         if (!us.exists()) continue;
         const u = us.data(), me = mid===uid;
         const pct = sq.totalPts ? Math.round((u.totalPts||0)/sq.totalPts*100) : 0;
+        
+        // زر الطرد يظهر إذا كنت القائد وهذا العضو ليس أنت
+        const kickBtn = (isLeader && !me) 
+          ? `<button class="kick-btn" onclick="kickMember('${mid}', '${u.name}')">❌ طرد</button>` 
+          : '';
+
         const d = document.createElement('div');
         d.className = 'mc'+(me?' is-me':'');
         d.innerHTML = `
           <div class="mc-av">${u.name[0]}</div>
           <div class="mc-body">
-            <div class="mc-name">${u.name}${me?'<span class="me-chip">أنت</span>':''}</div>
+            <div class="mc-name">${u.name}${me?'<span class="me-chip">أنت</span>':''} ${mid === sq.creatorId ? '👑' : ''}</div>
             <div class="mc-sub">${u.branch==='علمي'?'🔬 علمي':'📖 أدبي'} · السادس الإعدادي</div>
             <div class="mc-bar"><div class="mc-fill" style="width:${pct}%"></div></div>
           </div>
           <div class="mc-r">
             <div class="mc-pts">⚡${fmt(u.totalPts||0)}</div>
             <div class="mc-hrs">${fmtH(u.totalSec||0)}</div>
+            ${kickBtn} 
           </div>`;
         wrap.appendChild(d);
       }
     }
+
   });
 
   const lbQ = query(collection(db,'squads'), orderBy('totalPts','desc'));
@@ -719,7 +801,20 @@ async function stopStudy(){
   await setDoc(doc(collection(db,'sessions')),{ uid, squadId, subject:subj, seconds:studySec, pts, ts:serverTimestamp(), sessionMode, sessionTarget });
   flash('+'+pts+' ⚡'); 
   toast('أحسنت! +'+pts+' نقطة ('+subj+')','ok');
-  studySec=0; 
+  const randomTip = mizanTips[Math.floor(Math.random() * // داخل دالة stopStudy
+let customMsg = "";
+if (pts > 120) {
+  customMsg = "أنت عملاق! ساعتين دراسة متواصلة؟ وحش الـ 2026!";
+} else if (pts < 30) {
+  customMsg = "بداية جيدة، حاول بالجلسة الجاية تزيد الوقت شوية.";
+} else {
+  customMsg = mizanTips[Math.floor(Math.random() * mizanTips.length)];
+}
+
+setTimeout(() => toast(customMsg, 'ok'), 2000);
+
+
+studySec=0; 
   renderClock();
 }
 function renderClock(){
@@ -731,7 +826,16 @@ function renderClock(){
 function flash(t){ const e=G('pts-flash'); e.textContent=t; e.classList.add('on'); setTimeout(()=>e.classList.remove('on'),2200); }
 
 /* ═══ HELPERS ═══ */
-window.copyCode = ()=>{ navigator.clipboard.writeText(G('sq-code').textContent).then(()=>toast('تم النسخ 📋','ok')); };
+window.copyCode = () => {
+    const codeElem = G('sq-code');
+    navigator.clipboard.writeText(codeElem.textContent).then(() => {
+        toast('تم النسخ.. شارك الكود مع فريقك 📋', 'ok');
+        // تأثير بصري بسيط
+        codeElem.style.color = '#4CAF50'; 
+        setTimeout(() => codeElem.style.color = '', 1000);
+    });
+};
+
 window.switchTab= tab=>{
   ['team','study','rank','challenges'].forEach(t=>{
     const panel = G('panel-'+t);
@@ -1060,6 +1164,22 @@ select option{background:var(--c2)}
   .tabs{grid-template-columns:1fr 1fr 1fr 1fr}
   .tab{font-size:.6rem}
 }
+.kick-btn {
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid var(--red);
+  color: var(--red);
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  margin-top: 5px;
+  display: block;
+}
+.kick-btn:hover {
+  background: var(--red);
+  color: white;
+}
+
 </style>
 
 </head>
@@ -1220,6 +1340,12 @@ select option{background:var(--c2)}
       <button class="cp-btn" onclick="copyCode()">📋 نسخ</button>
     </div>
   </div>
+</div> 
+
+<button class="cp-btn" onclick="leaveSquad()" style="border-color:var(--red);color:var(--red);margin-top:0.8rem;width:100%;display:flex;justify-content:center;gap:5px;">
+  <span>🚪</span> مغادرة الفريق
+</button>
+
 
   <div class="s4">
     <div class="sbox">      <div class="sv" id="sq-pts">0</div><div class="sl">⚡ نقاط الفريق</div></div>
@@ -1294,6 +1420,28 @@ select option{background:var(--c2)}
 
 </div>
 </div>
+<!-- MODAL: SESSION SETUP -->
+<div id="session-modal" class="session-modal">
+  <div class="session-content">
+    <div class="session-hd">⏱ تجهيز جلسة الدراسة</div>
+    
+    <div class="session-field">
+      <label>كم ساعة تنوي الدراسة؟</label>
+      <input type="range" id="session-hours" class="session-slider" min="0.5" max="12" step="0.5" value="1" oninput="G('val-h').textContent = this.value + ' ساعة'">
+      <div class="session-value" id="val-h">1 ساعة</div>
+    </div>
+
+    <div class="session-field">
+      <label>استراحة كل (دقائق)؟</label>
+      <input type="range" id="session-break" class="session-slider" min="5" max="60" step="5" value="10" oninput="G('val-b').textContent = this.value + ' دقيقة'">
+      <div class="session-value" id="val-b">10 دقيقة</div>
+    </div>
+
+    <button class="btn btn-p" onclick="startSession()">🚀 ابدأ الجلسة الآن</button>
+    <button class="btn btn-g" onclick="closeSessionModal()">إلغاء</button>
+  </div>
+</div>
+
 
 <!-- MODAL: CHALLENGES -->
 
