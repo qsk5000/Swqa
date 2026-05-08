@@ -342,28 +342,64 @@ function bootSquad() {
     setText('sq-pts',   fmt(sq.totalPts||0));
     setText('sq-hrs',   fmtH(sq.totalSec||0));
     
-    // عرض التحديات النشطة
+    // تحديث التحديات وحذف المنتهية
     const chalWrap = G('challenges-wrap');
-    if (chalWrap) {
+    if (chalWrap && sq.activeChallenges && sq.activeChallenges.length > 0) {
       chalWrap.innerHTML = '';
-      if (sq.activeChallenges && sq.activeChallenges.length > 0) {
-        for (const chal of sq.activeChallenges) {
-          const oppSnap = await getDoc(doc(db,'squads',chal.opponentId));
-          const opp = oppSnap.data();
-          const status = chal.status || 'pending';
-          let statusBadge = status === 'pending' ? '⏳ في الانتظار' : 
-                            status === 'active' ? '🔥 جارٍ' : '✅ اكتمل';
-          chalWrap.innerHTML += `<div class="challenge-card">
-            <div class="chal-hd">${sq.badge} ${sq.name} VS ${opp.badge} ${opp.name}</div>
-            <div class="chal-pts">⚡ ${chal.team1Pts||0} - ${chal.team2Pts||0}</div>
-            <div class="chal-status">${statusBadge}</div>
-            ${status === 'pending' && chal.opponentId !== squadId ? 
-              `<button class="btn btn-t" style="margin:0" onclick="acceptChallenge('${chal.id}')">قبول التحدي</button>` : ''}
-          </div>`;
+      const now = new Date();
+      const validChallenges = [];
+      
+      for (const chal of sq.activeChallenges) {
+        const endTime = new Date(chal.endsAt);
+        // احفظ فقط التحديات الي ما انتهت بعد
+        if (now <= endTime) {
+          validChallenges.push(chal);
         }
-      } else {
-        chalWrap.innerHTML = '<div style="text-align:center;color:var(--ink3);padding:1rem">لا توجد تحديات حالياً</div>';
       }
+      
+      // إذا في تحديات انتهت، حدّث Firebase
+      if (validChallenges.length < sq.activeChallenges.length) {
+        try {
+          await updateDoc(doc(db,'squads',squadId), { activeChallenges: validChallenges });
+        } catch(e) {
+          console.error('Error updating challenges:', e);
+        }
+      }
+      
+      // عرض التحديات الباقية
+      if (validChallenges.length === 0) {
+        chalWrap.innerHTML = '<div style="text-align:center;color:var(--ink3);padding:1rem;font-size:.85rem">لا توجد تحديات حالياً 🏁</div>';
+      } else {
+        for (const chal of validChallenges) {
+          try {
+            const oppSnap = await getDoc(doc(db,'squads',chal.opponentId));
+            if (!oppSnap.exists()) continue;
+            const opp = oppSnap.data();
+            const status = chal.status || 'pending';
+            let statusBadge = status === 'pending' ? '⏳ في الانتظار' : 
+                              status === 'active' ? '🔥 جارٍ' : '✅ اكتمل';
+            
+            const endTime = new Date(chal.endsAt);
+            const remaining = Math.max(0, Math.floor((endTime - now) / 1000));
+            const remainingHours = Math.floor(remaining / 3600);
+            const remainingMins = Math.floor((remaining % 3600) / 60);
+            const timeStr = remainingHours > 0 ? `${remainingHours}س ${remainingMins}د` : `${remainingMins}د`;
+            
+            chalWrap.innerHTML += `<div class="challenge-card">
+              <div class="chal-hd">${sq.badge} ${sq.name} VS ${opp.badge} ${opp.name}</div>
+              <div class="chal-pts">⚡ ${chal.team1Pts||0} - ${chal.team2Pts||0}</div>
+              <div class="chal-time">⏱ المتبقي: ${timeStr}</div>
+              <div class="chal-status">${statusBadge}</div>
+              ${status === 'pending' && chal.opponentId !== squadId ? 
+                `<button class="btn btn-t" style="margin:0;font-size:.85rem;padding:.7rem" onclick="acceptChallenge('${chal.id}')">قبول التحدي</button>` : ''}
+            </div>`;
+          } catch(e) {
+            console.error('Error rendering challenge:', e);
+          }
+        }
+      }
+    } else {
+      if (chalWrap) chalWrap.innerHTML = '<div style="text-align:center;color:var(--ink3);padding:1rem;font-size:.85rem">لا توجد تحديات حالياً 🏁</div>';
     }
     
     const wrap = G('members-wrap'); 
@@ -425,27 +461,38 @@ function bootSquad() {
 }
 
 /* ═══ CHALLENGES ═══ */
-window.openChallengeModal = () => {
+window.openChallengeModal = async () => {
   G('challenge-modal').style.display = 'flex';
-  loadOpponentSquads();
+  await loadOpponentSquads();
 };
 window.closeChallengeModal = () => {
   G('challenge-modal').style.display = 'none';
 };
 async function loadOpponentSquads() {
   const wrap = G('opponent-squads-wrap');
-  wrap.innerHTML = '';
-  onSnapshot(collection(db,'squads'), snap => {
-    snap.docs.forEach(d => {
-      if (d.id === squadId) return;
-      const sq = d.data();
-      wrap.innerHTML += `<div class="opp-card">
-        <div class="opp-nm">${sq.badge} ${sq.name}</div>
-        <div class="opp-info">👥 ${sq.members.length}/5 · ⚡ ${fmt(sq.totalPts||0)}</div>
-        <button class="btn btn-p" style="margin:0;font-size:.85rem" onclick="sendChallenge('${d.id}')">تحدي</button>
-      </div>`;
+  if (!wrap) return;
+  wrap.innerHTML = '<div style="text-align:center;color:var(--ink3)">جاري التحميل...</div>';
+  try {
+    onSnapshot(collection(db,'squads'), snap => {
+      wrap.innerHTML = '';
+      if (snap.empty) {
+        wrap.innerHTML = '<div style="text-align:center;color:var(--ink3);padding:1rem;font-size:.85rem">لا توجد فرق أخرى</div>';
+        return;
+      }
+      snap.docs.forEach(d => {
+        if (d.id === squadId) return;
+        const sq = d.data();
+        wrap.innerHTML += `<div class="opp-card">
+          <div class="opp-nm">${sq.badge || '🛡️'} ${sq.name}</div>
+          <div class="opp-info">👥 ${sq.members?.length || 0}/5 · ⚡ ${fmt(sq.totalPts||0)}</div>
+          <button class="btn btn-p" style="margin:0;font-size:.85rem;padding:.7rem" onclick="sendChallenge('${d.id}')">تحدي</button>
+        </div>`;
+      });
     });
-  });
+  } catch(e) {
+    console.error('Error loading squads:', e);
+    wrap.innerHTML = '<div style="text-align:center;color:var(--red);padding:1rem">خطأ في التحميل</div>';
+  }
 }
 window.sendChallenge = async (oppId) => {
   const duration = parseInt(G('challenge-duration').value) || 24;
@@ -788,6 +835,7 @@ select option{background:var(--c2)}
 .chal-hd{font-size:.85rem;font-weight:700;color:var(--gold);margin-bottom:.5rem}
 .chal-pts{font-size:1.1rem;font-weight:800;color:var(--red);font-family:'IBM Plex Mono',monospace;margin-bottom:.4rem}
 .chal-status{font-size:.72rem;color:var(--ink3);margin-bottom:.6rem}
+.chal-time{font-size:.78rem;color:var(--amber);font-weight:600;margin-bottom:.5rem;display:flex;align-items:center;gap:.4rem}
 
 .challenge-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);
   display:none;align-items:center;justify-content:center;z-index:999;backdrop-filter:blur(6px)}
@@ -1106,6 +1154,19 @@ select option{background:var(--c2)}
     <div class="modal-hd">
       <span>⚔️ اختر فريقاً للتحدي</span>
       <button class="modal-close" onclick="closeChallengeModal()">✕</button>
+    </div>
+    <div style="margin-bottom:1rem">
+      <label class="field-label">⏱ مدة التحدي (ساعات)</label>
+      <select id="challenge-duration" style="margin-bottom:0">
+        <option value="1">ساعة واحدة</option>
+        <option value="3">3 ساعات</option>
+        <option value="6">6 ساعات</option>
+        <option value="12">12 ساعة</option>
+        <option value="24" selected>يوم واحد (24 ساعة)</option>
+        <option value="48">يومين (48 ساعة)</option>
+        <option value="72">3 أيام (72 ساعة)</option>
+        <option value="168">أسبوع (7 أيام)</option>
+      </select>
     </div>
     <div id="opponent-squads-wrap"></div>
   </div>
