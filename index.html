@@ -448,9 +448,11 @@ async function loadOpponentSquads() {
   });
 }
 window.sendChallenge = async (oppId) => {
+  const duration = parseInt(G('challenge-duration').value) || 24;
   const sq = (await getDoc(doc(db,'squads',squadId))).data();
   const oppSq = (await getDoc(doc(db,'squads',oppId))).data();
   const chalId = Math.random().toString(36).substr(2,9);
+  const endsAt = new Date(Date.now() + duration*60*60*1000);
   await setDoc(doc(db,'challenges',chalId), {
     id: chalId,
     team1Id: squadId,
@@ -462,14 +464,16 @@ window.sendChallenge = async (oppId) => {
     team2Badge: oppSq.badge,
     team2Pts: 0,
     status: 'pending',
+    durationHours: duration,
     createdAt: serverTimestamp(),
-    endsAt: new Date(Date.now() + 7*24*60*60*1000).toISOString()
+    startsAt: null,
+    endsAt: endsAt.toISOString()
   });
   await updateDoc(doc(db,'squads',squadId), {
-    activeChallenges: [...(sq.activeChallenges||[]), {id:chalId, opponentId:oppId, status:'pending', team1Pts:0, team2Pts:0}]
+    activeChallenges: [...(sq.activeChallenges||[]), {id:chalId, opponentId:oppId, status:'pending', team1Pts:0, team2Pts:0, durationHours:duration, endsAt:endsAt.toISOString()}]
   });
   await updateDoc(doc(db,'squads',oppId), {
-    activeChallenges: [...(oppSq.activeChallenges||[]), {id:chalId, opponentId:squadId, status:'pending', team1Pts:0, team2Pts:0}]
+    activeChallenges: [...(oppSq.activeChallenges||[]), {id:chalId, opponentId:squadId, status:'pending', team1Pts:0, team2Pts:0, durationHours:duration, endsAt:endsAt.toISOString()}]
   });
   closeChallengeModal();
   toast('تم إرسال التحدي! 🎯','ok');
