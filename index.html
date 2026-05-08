@@ -1327,7 +1327,6 @@ select option{background:var(--c2)}
 <!-- ══ SQUAD ══ -->
 
 <div id="s-squad" style="display:none">
-
   <div class="sq-hero">
     <div class="sq-big" id="sq-name">…</div>
     <div class="sq-meta">
@@ -1339,13 +1338,10 @@ select option{background:var(--c2)}
       <div><div class="cp-lbl">كود الدعوة</div><div class="cp-val" id="sq-code">—</div></div>
       <button class="cp-btn" onclick="copyCode()">📋 نسخ</button>
     </div>
+    <button class="cp-btn" onclick="leaveSquad()" style="border-color:var(--red);color:var(--red);margin-top:0.8rem;width:100%;display:flex;justify-content:center;gap:5px;background:rgba(248,113,113,0.05)">
+      <span>🚪</span> مغادرة الفريق
+    </button>
   </div>
-</div> 
-
-<button class="cp-btn" onclick="leaveSquad()" style="border-color:var(--red);color:var(--red);margin-top:0.8rem;width:100%;display:flex;justify-content:center;gap:5px;">
-  <span>🚪</span> مغادرة الفريق
-</button>
-
 
   <div class="s4">
     <div class="sbox">      <div class="sv" id="sq-pts">0</div><div class="sl">⚡ نقاط الفريق</div></div>
@@ -1369,43 +1365,26 @@ select option{background:var(--c2)}
       <button class="btn btn-p" onclick="openSessionModal()" style="margin-bottom:1rem">⏱ ابدأ جلسة مخطط لها</button>
       <span class="field-label">المادة الحالية</span>
       <select id="subj-sel"></select>
-
-
-  <div id="session-info">
-    <div class="session-stat">
-      <span class="session-stat-label">📊 الهدف</span>
-      <span class="session-stat-value" id="session-target">—</span>
-    </div>
-    <div class="session-stat">
-      <span class="session-stat-label">⏳ المتبقي</span>
-      <span class="session-stat-value" id="session-remaining">—</span>
-    </div>
-    <div class="session-progress">
-      <div class="session-progress-label">
-        <span>التقدم</span>
-        <span id="session-progress-num">0%</span>
+      
+      <div id="session-info">
+        <div class="session-stat">
+          <span class="session-stat-label">📊 الهدف</span>
+          <span class="session-stat-value" id="session-target">—</span>
+        </div>
+        <div class="session-stat">
+          <span class="session-stat-label">⏳ المتبقي</span>
+          <span class="session-stat-value" id="session-remaining">—</span>
+        </div>
+        <div class="session-progress">
+          <div class="session-progress-label"><span>التقدم</span><span id="session-progress-num">0%</span></div>
+          <div class="session-progress-bar"><div class="session-progress-fill" id="session-progress-bar-fill"></div></div>
+        </div>
       </div>
-      <div class="session-progress-bar">
-        <div class="session-progress-fill" id="session-progress-bar"></div>
-      </div>
+
+      <div id="timer-box"><div id="clock">00:00:00</div></div>
+      <button id="study-btn" class="btn btn-study" onclick="toggleStudy()"><span id="study-lbl">▶ ابدأ الدراسة</span></button>
+      <div class="pts-rule">دقيقة واحدة = نقطة واحدة لك وللفريق</div>
     </div>
-  </div>
-  
-  <div id="timer-box"><div id="clock">00:00:00</div></div>
-  <button id="study-btn" class="btn btn-study" onclick="toggleStudy()">
-    <span id="study-lbl">▶ ابدأ الدراسة</span>
-  </button>
-  <div class="pts-rule">دقيقة واحدة = نقطة واحدة لك وللفريق</div>
-</div>
-<div class="tip-box">
-  <div class="tip-ttl">💡 نظام الجلسات</div>
-  <div class="tip-li"><span>📅</span><span>اختر عدد ساعات الدراسة والاستراحة</span></div>
-  <div class="tip-li"><span>⏱</span><span>تنبيهات تلقائية للاستراحة كل فترة</span></div>
-  <div class="tip-li"><span>⚡</span><span>كل دقيقة = نقطة فورية</span></div>
-  <div class="tip-li"><span>🎯</span><span>متابعة مباشرة لتقدمك نحو الهدف</span></div>
-</div>
-
-
   </div>
 
   <div id="panel-rank" style="display:none">
@@ -1417,59 +1396,30 @@ select option{background:var(--c2)}
     <button class="btn btn-p" style="margin-bottom:1rem" onclick="openChallengeModal()">⚔️ تحدي فريق جديد</button>
     <div id="challenges-wrap"></div>
   </div>
+</div> <script type="module">
+// ... الأكواد السابقة كما هي ...
 
-</div>
-</div>
-<!-- MODAL: SESSION SETUP -->
-<div id="session-modal" class="session-modal">
-  <div class="session-content">
-    <div class="session-hd">⏱ تجهيز جلسة الدراسة</div>
+function startStudy(){
+  studyActive=true;
+  lastStudyTime = Date.now() - studySec * 1000;
+  G('study-btn').classList.add('running');
+  setText('study-lbl', sessionMode ? '⏹ استراحة' : '⏹ إيقاف الجلسة');
+  G('timer-box').style.display='flex';
+  
+  studyTick = setInterval(()=>{ 
+    studySec = Math.floor((Date.now() - lastStudyTime) / 1000);
+    renderClock();
     
-    <div class="session-field">
-      <label>كم ساعة تنوي الدراسة؟</label>
-      <input type="range" id="session-hours" class="session-slider" min="0.5" max="12" step="0.5" value="1" oninput="G('val-h').textContent = this.value + ' ساعة'">
-      <div class="session-value" id="val-h">1 ساعة</div>
-    </div>
+    // --- التعديل المطلوب: تنبيه الـ 3 ساعات ---
+    if (studySec === 10800) { 
+       toast("أخوية.. صارلك 3 ساعات تدرس، اخذ استراحة 15 دقيقة وعيد نشاطك.", "warn");
+    }
 
-    <div class="session-field">
-      <label>استراحة كل (دقائق)؟</label>
-      <input type="range" id="session-break" class="session-slider" min="5" max="60" step="5" value="10" oninput="G('val-b').textContent = this.value + ' دقيقة'">
-      <div class="session-value" id="val-b">10 دقيقة</div>
-    </div>
-
-    <button class="btn btn-p" onclick="startSession()">🚀 ابدأ الجلسة الآن</button>
-    <button class="btn btn-g" onclick="closeSessionModal()">إلغاء</button>
-  </div>
-</div>
-
-
-<!-- MODAL: CHALLENGES -->
-
-<div id="challenge-modal" class="challenge-modal">
-  <div class="modal-content">
-    <div class="modal-hd">
-      <span>⚔️ اختر فريقاً للتحدي</span>
-      <button class="modal-close" onclick="closeChallengeModal()">✕</button>
-    </div>
-    <div style="margin-bottom:1rem">
-      <label class="field-label">⏱ مدة التحدي (ساعات)</label>
-      <select id="challenge-duration" style="margin-bottom:0">
-        <option value="1">ساعة واحدة</option>
-        <option value="3">3 ساعات</option>
-        <option value="6">6 ساعات</option>
-        <option value="12">12 ساعة</option>
-        <option value="24" selected>يوم واحد (24 ساعة)</option>
-        <option value="48">يومين (48 ساعة)</option>
-        <option value="72">3 أيام (72 ساعة)</option>
-        <option value="168">أسبوع (7 أيام)</option>
-      </select>
-    </div>
-    <div id="opponent-squads-wrap"></div>
-  </div>
-</div>
-
-<div id="pts-flash"></div>
-<div id="toast" class="toast"></div>
+    if (sessionMode) updateSessionInfo();
+    saveStudyState();
+  }, 1000);
+}
+</script>
 
 <script>
 window.pickBranch = function(b){
