@@ -1323,52 +1323,91 @@ select option{background:var(--c2)}
 <div id="pts-flash"></div>
 <div id="toast" class="toast"></div>
 
-<script>
+<script type="module">
 window.pickBranch = function(b){
   document.getElementById('r-branch').value = b;
   document.getElementById('bb-sci').classList.toggle('sel', b==='علمي');
   document.getElementById('bb-lit').classList.toggle('sel', b==='أدبي');
 };
+
 window.pickSignupBranch = function(b){
   document.getElementById('signup-branch').value = b;
   document.getElementById('bb-signup-sci').classList.toggle('sel', b==='علمي');
   document.getElementById('bb-signup-lit').classList.toggle('sel', b==='أدبي');
 };
+
 pickBranch('علمي');
 pickSignupBranch('علمي');
 
-import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getAuth, onAuthStateChanged } 
+from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
 const authCheck = getAuth();
+
 onAuthStateChanged(authCheck, u => {
   const logoutBtn = document.getElementById('logout-btn');
-  const userInfo = document.getElementById('top-user-info');
+  const userInfo  = document.getElementById('top-user-info');
+
   if (u) {
     logoutBtn.style.display = 'block';
-    userInfo.style.display = 'block';
+    userInfo.style.display  = 'block';
   } else {
     logoutBtn.style.display = 'none';
-    userInfo.style.display = 'none';
+    userInfo.style.display  = 'none';
   }
 });
-  <!-- MODAL: SESSION SETUP -->
+</script>
+
+<!-- MODAL: SESSION SETUP -->
 <div id="session-modal" class="session-modal">
   <div class="session-content">
     <div class="session-hd">📅 ضبط جلسة الدراسة</div>
-    
+
     <div class="session-field">
       <label>⏱ مدة الدراسة (بالساعات)</label>
-      <input type="range" id="session-hours" class="session-slider" min="0.5" max="12" step="0.5" value="1" oninput="G('h-val').textContent = this.value">
-      <div class="session-value"><span id="h-val">1</span> ساعة</div>
+
+      <input
+        type="range"
+        id="session-hours"
+        class="session-slider"
+        min="0.5"
+        max="12"
+        step="0.5"
+        value="1"
+        oninput="document.getElementById('h-val').textContent = this.value"
+      >
+
+      <div class="session-value">
+        <span id="h-val">1</span> ساعة
+      </div>
     </div>
 
     <div class="session-field">
       <label>☕ مدة الاستراحة (بالدقائق)</label>
-      <input type="range" id="session-break" class="session-slider" min="5" max="60" step="5" value="10" oninput="G('b-val').textContent = this.value">
-      <div class="session-value"><span id="b-val">10</span> دقيقة</div>
+
+      <input
+        type="range"
+        id="session-break"
+        class="session-slider"
+        min="5"
+        max="60"
+        step="5"
+        value="10"
+        oninput="document.getElementById('b-val').textContent = this.value"
+      >
+
+      <div class="session-value">
+        <span id="b-val">10</span> دقيقة
+      </div>
     </div>
 
-    <button class="btn btn-p" onclick="startSession()">🎯 ابدأ الجلسة</button>
-    <button class="btn btn-g" onclick="closeSessionModal()">إلغاء</button>
+    <button class="btn btn-p" onclick="startSession()">
+      🎯 ابدأ الجلسة
+    </button>
+
+    <button class="btn btn-g" onclick="closeSessionModal()">
+      إلغاء
+    </button>
   </div>
 </div>
 
